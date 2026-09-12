@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(20, 20, 23, 0.06);
+}
+
+* {
+  border-color: theme('colors.ink.100');
+}
+
+body {
+  background-image: radial-gradient(circle at 20% 0%, rgba(225, 58, 58, 0.05), transparent 40%),
+    radial-gradient(circle at 100% 20%, rgba(225, 58, 58, 0.04), transparent 45%);
+}
+
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+}
+
+::selection {
+  background: theme('colors.accent.100');
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: theme('colors.ink.100');
+  border-radius: 999px;
+}

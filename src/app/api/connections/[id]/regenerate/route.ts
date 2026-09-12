@@ -1,0 +1,117 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { db } from '@/lib/db';
+import { requireUser, AuthError } from '@/lib/auth';
+import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
+import { findConnectionCandidates } from '@/lib/ai/agents/connectionFinder';
+import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
+import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
+import { generateMemoryHook } from '@/lib/ai/agents/memoryHookGenerator';
+import { runQualityGate } from '@/lib/ai/qualityGate';
+import { recordRegeneration } from '@/lib/ai/agents/personalizationEngine';
+import { checkAndTrackUsage, EntitlementError } from '@/lib/billing/entitlements';
+
+const schema = z.object({
+  preferredType: z.enum(['CHARACTER', 'EVENT', 'CAUSE_EFFECT', 'SEQUENCE', 'CONTRAST', 'STORY', 'VISUAL', 'COMPARISON']).optional()
+});
+
+/** Item 16/18: "ما عجبني الربط" / "ما فهمت" — never returns the same worldRef+type angle twice. */
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireUser();
+    const { id } = await params;
+    const body = schema.parse(await req.json().catch(() => ({})));
+
+    const previous = await db.connection.findUnique({
+      where: { id },
+      include: { concept: { include: { document: true } } }
+    });
+    if (!previous || previous.concept.document.userId !== user.id) {
+      return NextResponse.json({ error: 'الربط غير موجود.' }, { status: 404 });
+    }
+
+    await checkAndTrackUsage(user.id, 'connections', 'maxConnectionsPerMonth');
+    await recordRegeneration(user.id, previous.worldCategory);
+
+    const priorAngles = await db.connection.findMany({
+      where: { conceptId: previous.conceptId },
+      select: { worldRef: true }
+    });
+
+    const profile = await retrieveUserMemoryProfile(user.id);
+    const concept = previous.concept;
+
+    const candidates = await findConnectionCandidates(
+      {
+        title: concept.title,
+        summary: concept.summary,
+        importance: concept.importance,
+        conceptType: concept.conceptType,
+        sourcePageNumbers: concept.sourcePageIds.map(Number)
+      },
+      profile,
+      { userId: user.id, cacheKeyPrefix: `regen:${id}:${Date.now()}`, excludeWorldRefs: priorAngles.map((a) => a.worldRef) }
+    );
+
+    const filtered = body.preferredType ? candidates.filter((c) => c.type === body.preferredType) : candidates;
+    const pool = filtered.length > 0 ? filtered : candidates;
+
+    for (const candidate of pool.slice(0, 3)) {
+      const factCheck = await factCheckCandidate(candidate);
+      if (!factCheck.passed) continue;
+
+      const critic = await critiqueConnection(
+        candidate,
+        { title: concept.title, summary: concept.summary, importance: concept.importance, conceptType: concept.conceptType, sourcePageNumbers: [] },
+        { userId: user.id }
+      );
+      const gate = runQualityGate(candidate, critic);
+      if (!gate.approved) continue;
+
+      const polishedHook = await generateMemoryHook(
+        candidate,
+        { title: concept.title, summary: concept.summary, importance: concept.importance, conceptType: concept.conceptType, sourcePageNumbers: [] },
+        { userId: user.id }
+      );
+
+      const created = await db.connection.create({
+        data: {
+          conceptId: concept.id,
+          type: candidate.type,
+          worldCategory: candidate.worldCategory,
+          worldRef: candidate.worldRef,
+          headline: candidate.headline,
+          relationExplain: candidate.relationExplain,
+          memoryHook: polishedHook,
+          claimType: candidate.claimType,
+          score: gate.score,
+          scoreBreakdown: candidate.scoreBreakdown as unknown as object,
+          status: 'APPROVED',
+          regenerationOf: previous.id,
+          sources: {
+            create: candidate.sources.map((s) => ({
+              sourceType: s.sourceType,
+              url: s.url,
+              title: s.title,
+              confidence: s.confidence,
+              evidenceSnippet: s.evidenceSnippet
+            }))
+          }
+        },
+        include: { sources: true }
+      });
+
+      return NextResponse.json({ connection: created });
+    }
+
+    return NextResponse.json({
+      connection: null,
+      message: 'ما لقيت ربط قوي وصادق ثاني لهذا المفهوم، بس ما راح أخترع لك واحد.'
+    });
+  } catch (error) {
+    if (error instanceof AuthError) return NextResponse.json({ error: 'يجب تسجيل الدخول.' }, { status: 401 });
+    if (error instanceof EntitlementError) return NextResponse.json({ error: error.message }, { status: 402 });
+    console.error(error);
+    return NextResponse.json({ error: 'فشلت إعادة الربط.' }, { status: 500 });
+  }
+}

@@ -1,0 +1,542 @@
+// ============================================================
+// اربط لي يا حب ❤️ (ERBOTLI) — Database Schema
+// PostgreSQL. All tenant-scoped tables carry userId for isolation.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity ----------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  locale       String   @default("ar")
+  role         Role     @default(STUDENT)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile          Profile?
+  preferences      Preference[]
+  favoriteWorlds   FavoriteWorld[]
+  favoriteTeams    FavoriteTeam[]
+  favoritePlayers  FavoritePlayer[]
+  favoriteMovies   FavoriteMovie[]
+  favoriteShows    FavoriteShow[]
+  documents        Document[]
+  connectionFeedback ConnectionFeedback[]
+  flashcards       Flashcard[]
+  quizzes          Quiz[]
+  quizAttempts     QuizAttempt[]
+  studySessions    StudySession[]
+  reviewItems      ReviewItem[]
+  subscriptions    Subscription[]
+  usageRecords     Usage[]
+  aiGenerations    AiGeneration[]
+  auditLogs        AuditLog[]
+  gamification     GamificationProfile?
+
+  @@index([email])
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+// ---------- Onboarding / Preferences ----------
+
+model Profile {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  onboardingComplete Boolean  @default(false)
+  connectionStyles   String[] // stories | characters | events | cause_effect | comparisons | visual
+  memoryProfileJson  Json?    // denormalized "USER MEMORY PROFILE" snapshot, rebuilt on preference change
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model Preference {
+  // key/value preference weights used by the Personalization Engine, e.g.
+  // key="connection_type:character" value=20 ; key="world:football" value=30
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  weight    Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
+  @@index([userId])
+}
+
+enum WorldCategory {
+  SERIES
+  MOVIES
+  FOOTBALL
+  GAMES
+  ANIME
+  CHARACTERS
+  BOOKS
+  DAILY_LIFE
+}
+
+model FavoriteWorld {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  WorldCategory
+  createdAt DateTime      @default(now())
+
+  @@unique([userId, category])
+}
+
+model FavoriteTeam {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  kind       String  @default("club") // club | national
+  externalId String? // knowledge base / search provider id, for fact grounding
+  @@index([userId])
+}
+
+model FavoritePlayer {
+  id         String @id @default(cuid())
+  userId     String
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  externalId String?
+  @@index([userId])
+}
+
+model FavoriteMovie {
+  id           String @id @default(cuid())
+  userId       String
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  externalId   String?
+  favoriteChars String[]
+  @@index([userId])
+}
+
+model FavoriteShow {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  externalId    String?
+  favoriteChars String[]
+  rememberedBits String[]
+  @@index([userId])
+}
+
+// ---------- Documents / Slides ----------
+
+model Document {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileType     DocumentType
+  fileSizeKb   Int
+  storageKey   String         // path/key in storage driver, never exposed directly — served via signed URL
+  status       DocumentStatus @default(UPLOADED)
+  pageCount    Int?
+  contentHash  String         // sha256 of extracted text, used to skip re-processing unchanged docs
+  errorMessage String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  pages       DocumentPage[]
+  concepts    Concept[]
+  quizzes     Quiz[]
+  studySessions StudySession[]
+
+  @@index([userId])
+  @@unique([userId, contentHash])
+}
+
+enum DocumentType {
+  PDF
+  PPT
+  PPTX
+}
+
+enum DocumentStatus {
+  UPLOADED
+  EXTRACTING
+  OCR
+  PARSING
+  MAPPING_CONCEPTS
+  FINDING_CONNECTIONS
+  FACT_CHECKING
+  GENERATING
+  READY
+  FAILED
+}
+
+model DocumentPage {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber Int
+  rawText    String
+  usedOcr    Boolean  @default(false)
+  tables     Json?
+  createdAt  DateTime @default(now())
+
+  @@unique([documentId, pageNumber])
+}
+
+// ---------- Concepts & Connections ----------
+
+model Concept {
+  id            String   @id @default(cuid())
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  title         String
+  summary       String
+  importance    Int      @default(0) // 0-100, from "تحديد المعلومات المهمة للحفظ"
+  conceptType   ConceptType @default(DEFINITION)
+  sourcePageIds String[]
+  orderIndex    Int      // sequence position for mind-map / cause-effect chains
+  relatedToJson Json?    // adjacency: [{ conceptId, relation: "cause_effect"|"sequence"|"similar_term" }]
+  createdAt     DateTime @default(now())
+
+  connections Connection[]
+  flashcards  Flashcard[]
+  quizQuestions QuizQuestion[]
+  reviewItems ReviewItem[]
+
+  @@index([documentId])
+}
+
+enum ConceptType {
+  DEFINITION
+  PROCESS
+  CAUSE_EFFECT
+  COMPARISON
+  SEQUENCE
+  TERMINOLOGY
+}
+
+model Connection {
+  id               String   @id @default(cuid())
+  conceptId        String
+  concept          Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  type             ConnectionType
+  worldCategory    WorldCategory
+  worldRef         String   // e.g. "Breaking Bad", "Real Madrid"
+  headline         String   // e.g. "Negative Feedback ↔ Breaking Bad"
+  relationExplain  String   // "🔗 ليش ربطناها؟"
+  memoryHook       String   // "💡 احفظها كذا"
+  claimType        ClaimType @default(ANALOGY) // FACT | ANALOGY | INTERPRETATION — never blur these
+  score            Int      // 0-100 Connection Score, gates visibility at >= threshold
+  scoreBreakdown   Json     // { semanticRelevance, factualAccuracy, relationshipStrength, memorability, preferenceMatch, contextMatch, specificity }
+  status           ConnectionStatus @default(PENDING_CRITIC)
+  rejectionReason  String?  // filled when Connection Critic rejects
+  regenerationOf   String?  // previous Connection.id, for "اعد الربط" chain — never repeats the same angle
+  createdAt        DateTime @default(now())
+
+  sources  ConnectionSource[]
+  feedback ConnectionFeedback[]
+
+  @@index([conceptId])
+  @@index([status])
+}
+
+enum ConnectionType {
+  CHARACTER
+  EVENT
+  CAUSE_EFFECT
+  SEQUENCE
+  CONTRAST
+  STORY
+  VISUAL
+  COMPARISON
+}
+
+enum ClaimType {
+  FACT
+  ANALOGY
+  INTERPRETATION
+}
+
+enum ConnectionStatus {
+  PENDING_CRITIC
+  APPROVED
+  REJECTED
+  BELOW_THRESHOLD
+  NO_CONNECTION_FOUND // system explicitly declined to invent one
+}
+
+model ConnectionSource {
+  id           String   @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  sourceType   SourceType
+  url          String?
+  title        String?
+  confidence   Float    // 0-1, from retrieval/fact-checker
+  evidenceSnippet String
+  retrievedAt  DateTime @default(now())
+
+  @@index([connectionId])
+}
+
+enum SourceType {
+  KNOWLEDGE_BASE // curated, stable facts (classic films/shows/history)
+  LIVE_SEARCH    // sports results, recent events — must be fetched, never memorized
+  USER_PROVIDED
+}
+
+// ---------- Feedback / Personalization ----------
+
+model ConnectionFeedback {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId   String
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  reaction       FeedbackReaction
+  generatedClaim String   // snapshot of relationExplain at feedback time, for incorrect-claim audits
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([connectionId])
+}
+
+enum FeedbackReaction {
+  LOVE
+  LIKE
+  NEUTRAL
+  DISLIKE
+  INCORRECT
+}
+
+// ---------- Flashcards / Quizzes / Study ----------
+
+model Flashcard {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conceptId  String
+  concept    Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  front      String
+  back       String
+  connectionId String?
+  createdAt  DateTime @default(now())
+
+  reviewItems ReviewItem[]
+
+  @@index([userId])
+}
+
+model Quiz {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  title      String
+  createdAt  DateTime @default(now())
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([userId])
+}
+
+model QuizQuestion {
+  id           String   @id @default(cuid())
+  quizId       String
+  quiz         Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  conceptId    String
+  concept      Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  kind         QuizKind
+  prompt       String
+  choicesJson  Json?    // for MCQ
+  correctAnswer String
+  explanation  String
+
+  @@index([quizId])
+}
+
+enum QuizKind {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  FILL_BLANK
+  SCENARIO
+  RECALL
+}
+
+model QuizAttempt {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quizId     String
+  quiz       Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answersJson Json    // [{ questionId, given, correct }]
+  scorePct   Float
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+
+  @@index([userId])
+}
+
+model StudySession {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  mode       String   @default("focus") // focus | quiz | flashcards
+  startedAt  DateTime @default(now())
+  endedAt    DateTime?
+  conceptsCovered Int @default(0)
+
+  @@index([userId])
+}
+
+// Spaced repetition queue (SM-2-inspired)
+model ReviewItem {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conceptId    String?
+  concept      Concept? @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  flashcardId  String?
+  flashcard    Flashcard? @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
+  easeFactor   Float    @default(2.5)
+  intervalDays Int      @default(1)
+  dueAt        DateTime @default(now())
+  lastResult   ReviewResult?
+  reviewCount  Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, dueAt])
+  @@unique([userId, conceptId])
+  @@unique([userId, flashcardId])
+}
+
+enum ReviewResult {
+  AGAIN
+  HARD
+  GOOD
+  EASY
+}
+
+// ---------- Billing (provider-agnostic) ----------
+
+model Plan {
+  id            String   @id @default(cuid())
+  code          String   @unique // FREE | PLUS | PRO
+  nameAr        String
+  nameEn        String
+  priceMonthlyCents Int
+  currency      String   @default("SAR")
+  isActive      Boolean  @default(true)
+  limitsJson    Json     // { maxDocuments, maxPagesPerDoc, maxConnectionsPerMonth, maxQuizzesPerMonth, studyMode, spacedRepetition, prioritySupport }
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId            String
+  plan              Plan     @relation(fields: [planId], references: [id])
+  status            SubscriptionStatus @default(ACTIVE)
+  provider          String?  // null while PAYMENT_PROVIDER=none ; stripe | moyasar | ...
+  providerRef       String?  // external subscription id, opaque
+  currentPeriodEnd  DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+}
+
+model Usage {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodStart DateTime
+  periodEnd   DateTime
+  documents   Int      @default(0)
+  pages       Int      @default(0)
+  words       Int      @default(0)
+  connections Int      @default(0)
+  aiGenerations Int    @default(0)
+  quizzes     Int      @default(0)
+
+  @@unique([userId, periodStart])
+}
+
+model AiGeneration {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent       String   // e.g. "connection_finder", "fact_checker"
+  model       String
+  inputTokens Int
+  outputTokens Int
+  costCents   Float
+  latencyMs   Int
+  cacheHit    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([agent])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  metaJson  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ---------- Gamification ----------
+
+model GamificationProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  xp          Int      @default(0)
+  level       Int      @default(1)
+  streakDays  Int      @default(0)
+  lastActiveDate DateTime?
+  achievementsJson Json @default("[]")
+  updatedAt   DateTime @updatedAt
+}
