@@ -24,12 +24,16 @@ export function ConnectionCard({
   data,
   onLove,
   onDidntGetIt,
-  onDifferentInterest
+  onDifferentInterest,
+  differentInterestLabel = '🔄 اربطها بشيء آخر'
 }: {
   data: ConnectionCardData;
   onLove?: () => void;
   onDidntGetIt?: () => void;
   onDifferentInterest?: () => void;
+  /** Lets a read-only context (e.g. the landing page demo) relabel this action without pulling
+   * in feedback semantics that don't apply there ("was this good?" makes no sense on a canned example). */
+  differentInterestLabel?: string;
 }) {
   const [flipped, setFlipped] = useState(false);
 
@@ -88,26 +92,37 @@ export function ConnectionCard({
         </div>
       </div>
 
-      <div className="mt-2 flex items-center gap-2 rounded-xl2 border border-ink-100 bg-ink-50/60 px-5 py-3">
-        <button
-          className="rounded-full bg-accent-500 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-600"
-          onClick={onLove}
-        >
-          👍 ممتاز
-        </button>
-        <button
-          className="rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100"
-          onClick={onDidntGetIt}
-        >
-          👎 ما فهمته
-        </button>
-        <button
-          className="mr-auto rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100"
-          onClick={onDifferentInterest}
-        >
-          🔄 اربطها بشيء آخر
-        </button>
-      </div>
+      {(onLove || onDidntGetIt || onDifferentInterest) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl2 border border-ink-100 bg-ink-50/60 px-5 py-3">
+          {onLove && (
+            <button
+              className="rounded-full bg-accent-500 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-600"
+              onClick={onLove}
+            >
+              👍 ممتاز
+            </button>
+          )}
+          {onDidntGetIt && (
+            <button
+              className="rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100"
+              onClick={onDidntGetIt}
+            >
+              👎 ما فهمته
+            </button>
+          )}
+          {onDifferentInterest && (
+            <button
+              className={
+                'rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100 ' +
+                (onLove || onDidntGetIt ? 'mr-auto' : 'mx-auto')
+              }
+              onClick={onDifferentInterest}
+            >
+              {differentInterestLabel}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

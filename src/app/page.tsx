@@ -38,7 +38,7 @@ export default function LandingPage() {
             <span className="text-accent-500">ما تنساها</span> ❤️
           </h1>
           <p className="mx-auto mt-7 max-w-xl text-lg leading-relaxed text-ink-600">
-            "7 mg" ما تنساها إذا صارت "Ronaldo = 7". ارفع سلايداتك، وخل الذكاء الاصطناعي يسوي لك
+            "10 mg" ما تنساها إذا صارت "Messi = 10". ارفع سلايداتك، وخل الذكاء الاصطناعي يسوي لك
             أقصر رابط ممكن بين كل معلومة صعبة وشيء تعرفه وتحبه من جد — مو شرح طويل، بس جسر واحد
             يُفهم من أول نظرة.
           </p>
