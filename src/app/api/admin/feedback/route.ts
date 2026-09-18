@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireAdmin, AuthError } from '@/lib/auth';
+import { AuthError } from '@/lib/auth';
+import { requirePermission } from '@/lib/rbac';
 
 /** Item 28/29: review connections flagged DISLIKE/INCORRECT — quality-control queue. */
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('analytics.view');
     const feedback = await db.connectionFeedback.findMany({
       where: { reaction: { in: ['DISLIKE', 'INCORRECT'] } },
       include: {

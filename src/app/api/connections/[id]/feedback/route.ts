@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         userId: user.id,
         connectionId: id,
         reaction: body.reaction,
-        generatedClaim: connection.relationExplain,
+        generatedClaim: connection.bridgeLine,
         note: body.note
       }
     });
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       userId: user.id,
       reaction: body.reaction,
       worldCategory: connection.worldCategory,
-      connectionType: connection.type
+      associationLevel: connection.associationLevel
     });
 
     if (body.reaction === 'LOVE' || body.reaction === 'LIKE') {
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         data: {
           userId: user.id,
           action: 'connection.flagged_incorrect',
-          metaJson: { connectionId: id, concept: connection.conceptId, claim: connection.relationExplain }
+          metaJson: { connectionId: id, concept: connection.conceptId, claim: connection.bridgeLine }
         }
       });
     }

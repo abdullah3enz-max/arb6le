@@ -11,6 +11,13 @@ export interface ExtractedConcept {
   importance: number; // 0-100
   conceptType: 'DEFINITION' | 'PROCESS' | 'CAUSE_EFFECT' | 'COMPARISON' | 'SEQUENCE' | 'TERMINOLOGY';
   sourcePageNumbers: number[];
+  /**
+   * The atomic fact itself, isolated from its explanation — this is what actually gets
+   * bridged, never the surrounding sentence. "Dose = 7 mg" -> atomLabel "7 mg".
+   * Falls back to the concept title when the slide has no clean isolated value.
+   */
+  atomLabel: string;
+  atomEmoji: string; // a single emoji representing what kind of fact this is (💉 dose, ⏱️ time, 🫀 organ/term...)
 }
 
 export interface ConceptRelation {
@@ -25,7 +32,12 @@ export interface UserMemoryProfile {
   favoritePlayers: string[];
   favoriteShows: string[];
   favoriteMovies: string[];
-  connectionStyles: string[]; // stories | characters | events | cause_effect | comparisons | visual
+  favoriteAnime: string[];
+  favoriteGames: string[];
+  favoriteCars: string[];
+  favoriteMusic: string[];
+  favoritePeople: string[];
+  connectionStyles: string[]; // fast | funny | smart | visual | phonetic
   /** style/world weights from the Personalization Engine, higher = prefer more */
   weights: Record<string, number>;
 }
@@ -36,19 +48,19 @@ export type WorldCategory =
   | 'FOOTBALL'
   | 'GAMES'
   | 'ANIME'
+  | 'CARS'
+  | 'MUSIC'
+  | 'PEOPLE'
   | 'CHARACTERS'
   | 'BOOKS'
   | 'DAILY_LIFE';
 
-export type ConnectionType =
-  | 'CHARACTER'
-  | 'EVENT'
-  | 'CAUSE_EFFECT'
-  | 'SEQUENCE'
-  | 'CONTRAST'
-  | 'STORY'
-  | 'VISUAL'
-  | 'COMPARISON';
+/**
+ * The priority ladder (item 6 of the spec) — always attempt the lowest level first; it
+ * produces the strongest, most instantly-understood bridge. Only fall through to a higher
+ * level when the lower ones genuinely don't exist for this fact + this user's interests.
+ */
+export type AssociationLevel = 'DIRECT_MATCH' | 'PHONETIC' | 'VISUAL' | 'FAMOUS_ASSOCIATION' | 'CONTEXTUAL';
 
 export type ClaimType = 'FACT' | 'ANALOGY' | 'INTERPRETATION';
 export type SourceKind = 'KNOWLEDGE_BASE' | 'LIVE_SEARCH' | 'USER_PROVIDED';
@@ -61,28 +73,40 @@ export interface ConnectionSourceDraft {
   evidenceSnippet: string;
 }
 
+/**
+ * Internal scoring only (item 8) — never shown to the user, used purely to pick the best
+ * candidate and to gate what's shown at all. confusionRisk is inverted (higher = worse) and
+ * subtracted, not averaged in with the rest.
+ */
+export interface AssociationScoreBreakdown {
+  directness: number; // is this a 1:1 match, or does it need explaining?
+  familiarity: number; // does the user actually know this reference well?
+  simplicity: number; // can it be understood in under ~2 seconds?
+  memorability: number; // will it actually stick?
+  relevance: number; // does the bridge serve the real fact, not just sound clever?
+  confusionRisk: number; // could this be misread as a different fact? (higher = worse)
+}
+
 export interface ConnectionCandidate {
-  type: ConnectionType;
+  associationLevel: AssociationLevel;
   worldCategory: WorldCategory;
-  worldRef: string;
-  headline: string;
-  relationExplain: string;
-  memoryHook: string;
+  worldRef: string; // "Cristiano Ronaldo"
+  atomEmoji: string;
+  atomLabel: string; // "7 mg" — the fact, verbatim, never altered
+  bridgeLine: string; // the ENTIRE mnemonic: "Ronaldo = 7" — nothing longer
+  whyOneLiner: string; // one or two short sentences max, shown only behind "ليش؟"
   claimType: ClaimType;
   sources: ConnectionSourceDraft[];
-  scoreBreakdown: {
-    semanticRelevance: number;
-    factualAccuracy: number;
-    relationshipStrength: number;
-    memorability: number;
-    preferenceMatch: number;
-    contextMatch: number;
-    specificity: number;
-  };
+  scoreBreakdown: AssociationScoreBreakdown;
 }
 
 export interface CriticVerdict {
   verdict: 'APPROVE' | 'REJECT';
-  failedQuestion?: number; // 1-8, see docs/ARCHITECTURE.md §5
+  failedCheck?:
+    | 'factual_accuracy' // the real-world fact used (Ronaldo wears #7) is wrong
+    | 'relationship_real' // the link is invented / coincidental, not a genuine match
+    | 'hallucination' // a scene/stat/quote/event was made up
+    | 'too_slow' // takes more than ~2 seconds to parse
+    | 'weak_familiarity'; // the reference isn't actually something this user knows
   reason: string;
 }

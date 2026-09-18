@@ -22,6 +22,7 @@ model User {
   locale       String   @default("ar")
   role         Role     @default(STUDENT)
   status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -32,6 +33,11 @@ model User {
   favoritePlayers  FavoritePlayer[]
   favoriteMovies   FavoriteMovie[]
   favoriteShows    FavoriteShow[]
+  favoriteAnime    FavoriteAnime[]
+  favoriteGames    FavoriteGame[]
+  favoriteCars     FavoriteCar[]
+  favoriteMusic    FavoriteMusic[]
+  favoritePeople   FavoritePerson[]
   documents        Document[]
   connectionFeedback ConnectionFeedback[]
   flashcards       Flashcard[]
@@ -44,13 +50,24 @@ model User {
   aiGenerations    AiGeneration[]
   auditLogs        AuditLog[]
   gamification     GamificationProfile?
+  permissionOverrides UserPermissionOverride[]
+  assignedLeads    Lead[]     @relation("LeadAssignee")
+  leadNotes        LeadNote[]
 
   @@index([email])
 }
 
+// STUDENT never enters /admin. Every other role is staff (the "Employee" concept reuses this
+// same table — same auth/session machinery, discriminated by role — rather than a parallel
+// identity table for a second class of account).
 enum Role {
   STUDENT
+  OWNER
   ADMIN
+  SUPPORT
+  SALES
+  FINANCE
+  ANALYST
 }
 
 enum UserStatus {
@@ -91,6 +108,9 @@ enum WorldCategory {
   FOOTBALL
   GAMES
   ANIME
+  CARS
+  MUSIC
+  PEOPLE
   CHARACTERS
   BOOKS
   DAILY_LIFE
@@ -146,6 +166,53 @@ model FavoriteShow {
   @@index([userId])
 }
 
+model FavoriteAnime {
+  id            String @id @default(cuid())
+  userId        String
+  user          User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  externalId    String?
+  favoriteChars String[]
+  @@index([userId])
+}
+
+model FavoriteGame {
+  id            String @id @default(cuid())
+  userId        String
+  user          User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  externalId    String?
+  favoriteChars String[]
+  @@index([userId])
+}
+
+model FavoriteCar {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String  // brand + model, e.g. "Nissan GT-R"
+  externalId String?
+  @@index([userId])
+}
+
+model FavoriteMusic {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String  // artist, song, or album title
+  externalId String?
+  @@index([userId])
+}
+
+model FavoritePerson {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String  // any public figure the user searched and picked
+  externalId String?
+  @@index([userId])
+}
+
 // ---------- Documents / Slides ----------
 
 model Document {
@@ -154,8 +221,7 @@ model Document {
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   fileName     String
   fileType     DocumentType
-  fileSizeKb   Int
-  storageKey   String         // path/key in storage driver, never exposed directly — served via signed URL
+  textSizeKb   Int            // size of the client-extracted text, not the original file (no file ever reaches the server)
   status       DocumentStatus @default(UPLOADED)
   pageCount    Int?
   contentHash  String         // sha256 of extracted text, used to skip re-processing unchanged docs
@@ -212,6 +278,8 @@ model Concept {
   document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   title         String
   summary       String
+  atomLabel     String   @default("") // the isolated short fact itself, unmodified: "7 mg"
+  atomEmoji     String   @default("🧠") // single emoji representing the fact's kind
   importance    Int      @default(0) // 0-100, from "تحديد المعلومات المهمة للحفظ"
   conceptType   ConceptType @default(DEFINITION)
   sourcePageIds String[]
@@ -240,15 +308,16 @@ model Connection {
   id               String   @id @default(cuid())
   conceptId        String
   concept          Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
-  type             ConnectionType
+  associationLevel AssociationLevel // priority ladder: direct match is always tried before looser levels
   worldCategory    WorldCategory
-  worldRef         String   // e.g. "Breaking Bad", "Real Madrid"
-  headline         String   // e.g. "Negative Feedback ↔ Breaking Bad"
-  relationExplain  String   // "🔗 ليش ربطناها؟"
-  memoryHook       String   // "💡 احفظها كذا"
+  worldRef         String   // e.g. "Cristiano Ronaldo", "Real Madrid"
+  atomEmoji        String   // e.g. "💉" — represents the fact itself (dose, half-life, term...)
+  atomLabel        String   // the short fact as-is, unmodified: "7 mg", "8 hours"
+  bridgeLine       String   // the ENTIRE mnemonic, as short as possible: "Ronaldo = 7"
+  whyOneLiner      String   // one or two sentences max, only shown behind "ليش؟"
   claimType        ClaimType @default(ANALOGY) // FACT | ANALOGY | INTERPRETATION — never blur these
   score            Int      // 0-100 Connection Score, gates visibility at >= threshold
-  scoreBreakdown   Json     // { semanticRelevance, factualAccuracy, relationshipStrength, memorability, preferenceMatch, contextMatch, specificity }
+  scoreBreakdown   Json     // { directness, familiarity, simplicity, memorability, relevance, confusionRisk }
   status           ConnectionStatus @default(PENDING_CRITIC)
   rejectionReason  String?  // filled when Connection Critic rejects
   regenerationOf   String?  // previous Connection.id, for "اعد الربط" chain — never repeats the same angle
@@ -261,15 +330,14 @@ model Connection {
   @@index([status])
 }
 
-enum ConnectionType {
-  CHARACTER
-  EVENT
-  CAUSE_EFFECT
-  SEQUENCE
-  CONTRAST
-  STORY
-  VISUAL
-  COMPARISON
+// The priority ladder (item 6): always try the lowest number first — it's the strongest,
+// most-instantly-understood bridge. Only fall to a higher level when the lower ones fail.
+enum AssociationLevel {
+  DIRECT_MATCH        // 1 — same literal number/value: "7 mg" -> "Ronaldo #7"
+  PHONETIC            // 2 — sounds like something the user knows: "Metformin" -> "Metro"
+  VISUAL              // 3 — shape/color/symbol resemblance
+  FAMOUS_ASSOCIATION  // 4 — well-known fact about the interest: "10" -> "Messi"
+  CONTEXTUAL          // 5 — an event/character/story the user knows with a matching pattern
 }
 
 enum ClaimType {
@@ -510,6 +578,7 @@ model AiGeneration {
   costCents   Float
   latencyMs   Int
   cacheHit    Boolean  @default(false)
+  success     Boolean  @default(true)
   createdAt   DateTime @default(now())
 
   @@index([userId])
@@ -522,9 +591,117 @@ model AuditLog {
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action    String
   metaJson  Json?
+  ipAddress String?
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// ---------- RBAC (Admin Back-Office) ----------
+
+model Permission {
+  id            String @id @default(cuid())
+  key           String @unique // "users.view", "payments.refund", "owner_only_actions"...
+  category      String          // groups the permission-matrix UI: "users" | "crm" | "billing"...
+  descriptionAr String
+
+  rolePermissions RolePermission[]
+  overrides       UserPermissionOverride[]
+}
+
+// Role-level defaults. OWNER is not represented here — it always bypasses this table entirely
+// (see src/lib/rbac.ts) since "Owner has full access" is a standing invariant, not a grant list.
+model RolePermission {
+  id           String     @id @default(cuid())
+  role         Role
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([role, permissionId])
+}
+
+// Per-employee exception to their role's defaults — an explicit grant beyond the role, or an
+// explicit revoke of something the role would normally allow. Always wins over the role default.
+model UserPermissionOverride {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  granted      Boolean
+  createdAt    DateTime   @default(now())
+
+  @@unique([userId, permissionId])
+}
+
+// ---------- CRM ----------
+
+enum LeadStage {
+  LEAD
+  CONTACTED
+  TRIAL
+  QUALIFIED
+  PAID
+  RETENTION
+  CHURNED
+}
+
+enum LeadSource {
+  INSTAGRAM
+  TIKTOK
+  X
+  GOOGLE
+  REFERRAL
+  WEBSITE
+  CAMPAIGN
+  OTHER
+}
+
+model Lead {
+  id            String     @id @default(cuid())
+  name          String
+  email         String?
+  phone         String?
+  source        LeadSource @default(OTHER)
+  stage         LeadStage  @default(LEAD)
+  potentialPlan String?    // FREE | PLUS | PRO — a guess at the plan they'd convert to, not a real Subscription
+  valueCents    Int?       // estimated deal value, admin-entered — no real payment data backs this yet
+  assignedToId  String?
+  assignedTo    User?      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  lastContactAt DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  notes LeadNote[]
+  tasks LeadTask[]
+
+  @@index([stage])
+  @@index([assignedToId])
+  @@index([source])
+}
+
+model LeadNote {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+}
+
+model LeadTask {
+  id        String    @id @default(cuid())
+  leadId    String
+  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  title     String
+  dueAt     DateTime?
+  done      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@index([leadId])
 }
 
 // ---------- Gamification ----------

@@ -10,7 +10,7 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-8">
-      <NavBar userName={user.name ?? user.email} isAdmin={user.role === 'ADMIN'} />
+      <NavBar userName={user.name ?? user.email} isAdmin={user.role !== 'STUDENT'} />
       <div className="mt-8">
         <QuizRunner quizId={id} />
       </div>

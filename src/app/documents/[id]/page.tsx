@@ -10,7 +10,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-8">
-      <NavBar userName={user.name ?? user.email} isAdmin={user.role === 'ADMIN'} />
+      <NavBar userName={user.name ?? user.email} isAdmin={user.role !== 'STUDENT'} />
       <div className="mt-8">
         <DocumentDetail documentId={id} />
       </div>

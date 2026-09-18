@@ -9,3 +9,7 @@ out
 /prisma/dev.db-journal
 .vercel
 *.tsbuildinfo
+.claude
+.storage
+scratch-*
+/public/pdf.worker.min.mjs

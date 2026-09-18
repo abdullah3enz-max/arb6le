@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ProcessingSteps } from './ProcessingSteps';
 import { ConnectionCard, type ConnectionCardData } from './ConnectionCard';
+import { TiltCard } from './TiltCard';
 
 const WORLD_EMOJI: Record<string, string> = {
   SERIES: '📺',
@@ -11,6 +12,9 @@ const WORLD_EMOJI: Record<string, string> = {
   FOOTBALL: '⚽',
   GAMES: '🎮',
   ANIME: '🇯🇵',
+  CARS: '🚗',
+  MUSIC: '🎵',
+  PEOPLE: '👤',
   CHARACTERS: '🦸',
   BOOKS: '📚',
   DAILY_LIFE: '☀️'
@@ -18,12 +22,13 @@ const WORLD_EMOJI: Record<string, string> = {
 
 interface ConnectionRow {
   id: string;
-  type: string;
+  associationLevel: string;
   worldCategory: string;
   worldRef: string;
-  headline: string;
-  relationExplain: string;
-  memoryHook: string;
+  atomEmoji: string;
+  atomLabel: string;
+  bridgeLine: string;
+  whyOneLiner: string;
   claimType: 'FACT' | 'ANALOGY' | 'INTERPRETATION';
   score: number;
   sources: { title: string | null; sourceType: string }[];
@@ -33,6 +38,8 @@ interface ConceptRow {
   id: string;
   title: string;
   summary: string;
+  atomLabel: string;
+  atomEmoji: string;
   importance: number;
   orderIndex: number;
   connections: ConnectionRow[];
@@ -48,13 +55,13 @@ function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionC
   return {
     id: connection.id,
     conceptTitle: concept.title,
-    worldRef: connection.worldRef,
+    atomEmoji: connection.atomEmoji,
+    atomLabel: connection.atomLabel,
     worldEmoji: WORLD_EMOJI[connection.worldCategory] ?? '✨',
-    relationExplain: connection.relationExplain,
-    memoryHook: connection.memoryHook,
-    claimType: connection.claimType,
-    score: connection.score,
-    sourceLabel: connection.sources[0]?.title ?? connection.sources[0]?.sourceType ?? 'مصدر داخلي'
+    worldRef: connection.worldRef,
+    bridgeLine: connection.bridgeLine,
+    whyOneLiner: connection.whyOneLiner,
+    claimType: connection.claimType
   };
 }
 
@@ -71,7 +78,9 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     load();
     const interval = setInterval(() => {
       setState((current) => {
-        if (current && (current.document.status === 'READY' || current.document.status === 'FAILED')) {
+        // Keep polling through FAILED too — a "retry" click flips status back to a working
+        // stage and this same interval should pick that up without needing a manual restart.
+        if (current && current.document.status === 'READY') {
           clearInterval(interval);
           return current;
         }
@@ -90,10 +99,14 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     });
   }
 
-  async function regenerate(connectionId: string) {
+  async function regenerate(connectionId: string, differentCategory: boolean) {
     setBusyConnectionId(connectionId);
     try {
-      await fetch(`/api/connections/${connectionId}/regenerate`, { method: 'POST' });
+      await fetch(`/api/connections/${connectionId}/regenerate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ differentCategory })
+      });
       await load();
     } finally {
       setBusyConnectionId(null);
@@ -114,10 +127,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
 
   if (document.status !== 'READY') {
     return (
-      <div className="rounded-xl2 border border-ink-100 bg-white p-8 shadow-card">
+      <div className="rounded-xl2 border border-ink-100 bg-surface p-8 shadow-card">
         <h1 className="mb-4 text-xl font-extrabold text-ink-900">{document.fileName}</h1>
         <ProcessingSteps status={document.status} />
         {document.errorMessage && <p className="mt-4 text-sm text-accent-600">{document.errorMessage}</p>}
+        {document.status === 'FAILED' && (
+          <button
+            onClick={async () => {
+              await fetch(`/api/documents/${documentId}/retry`, { method: 'POST' });
+              load();
+            }}
+            className="mt-4 rounded-full bg-accent-500 px-5 py-2 text-sm font-bold text-white transition hover:bg-accent-600"
+          >
+            🔄 أعد المحاولة
+          </button>
+        )}
       </div>
     );
   }
@@ -135,10 +159,10 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
       <div>
         <h1 className="text-2xl font-extrabold text-ink-900">{document.fileName}</h1>
         <p className="mt-1 text-ink-500">
-          وجدنا {concepts.length} معلومة مهمة، وأفضل {withConnection.length} ربطًا شخصيًا لك.
+          وجدنا {concepts.length} معلومة مهمة، وسوّينا {withConnection.length} رابط ذاكرة شخصي لك.
         </p>
         {quizzes[0] && (
-          <Link href={`/quiz/${quizzes[0].id}`} className="mt-3 inline-block rounded-full bg-ink-900 px-5 py-2 text-sm font-bold text-white">
+          <Link href={`/quiz/${quizzes[0].id}`} className="mt-3 inline-block rounded-full bg-accent-500 px-5 py-2 text-sm font-bold text-white">
             جاهز نختبرك؟ 🎯
           </Link>
         )}
@@ -153,9 +177,12 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
               <ConnectionCard
                 key={connection.id}
                 data={toCardData(concept, connection)}
-                onFeedback={(r) => sendFeedback(connection.id, r)}
-                onRegenerate={() => regenerate(connection.id)}
-                onSaveFlashcard={() => saveFlashcard(concept.id, connection.id)}
+                onLove={() => sendFeedback(connection.id, 'LOVE')}
+                onDidntGetIt={() => {
+                  sendFeedback(connection.id, 'DISLIKE');
+                  regenerate(connection.id, false);
+                }}
+                onDifferentInterest={() => regenerate(connection.id, true)}
               />
             ))}
           </div>
@@ -167,14 +194,17 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
           <div className="space-y-3">
             {withoutConnection.map((c) => (
               <div key={c.id} className="rounded-xl2 border border-amber-100 bg-amber-50/60 p-4">
-                <p className="mb-1 font-bold text-ink-900">{c.title}</p>
+                <div className="mb-1 flex items-center gap-2 font-bold text-ink-900">
+                  <span>{c.atomEmoji}</span>
+                  <span>{c.atomLabel || c.title}</span>
+                </div>
                 <p className="text-sm text-ink-700">{c.summary}</p>
                 <p className="mt-2 text-xs font-semibold text-amber-700">
-                  ما لقينا ربط قوي وصادق لهذي المعلومة، فما اخترعنا لك واحد — احفظها مباشرة أو جرّب Flashcards.
+                  لم نجد رابطًا قويًا لهذه المعلومة، فما اخترعنا لك واحد — احفظها مباشرة أو جرّب Flashcards.
                 </p>
                 <button
                   onClick={() => saveFlashcard(c.id)}
-                  className="mt-2 rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                  className="mt-2 rounded-full border border-amber-200 bg-surface px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
                 >
                   💾 حوّلها Flashcard
                 </button>
@@ -188,16 +218,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
         <Section title="📝 راجعها لاحقًا">
           <div className="space-y-3">
             {reviewLater.map(({ concept, connection }) => (
-              <div key={concept.id} className="rounded-xl2 border border-ink-100 bg-white p-4">
-                <p className="font-bold text-ink-900">{concept.title}</p>
-                <p className="text-sm text-ink-500">{connection.headline}</p>
+              <div key={concept.id} className="flex items-center gap-3 rounded-xl2 border border-ink-100 bg-surface p-4">
+                <span className="text-lg">{connection.atomEmoji}</span>
+                <div>
+                  <p className="font-bold text-ink-900">{connection.atomLabel || concept.title}</p>
+                  <p className="text-sm text-ink-500">
+                    {WORLD_EMOJI[connection.worldCategory] ?? '✨'} {connection.bridgeLine}
+                  </p>
+                </div>
               </div>
             ))}
           </div>
         </Section>
       )}
 
-      {busyConnectionId && <p className="text-sm text-ink-400">نبحث عن ربط ثاني...</p>}
+      {busyConnectionId && <p className="text-sm text-ink-400">نبحث عن رابط ثاني...</p>}
     </div>
   );
 }
@@ -213,19 +248,42 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function MindMap({ concepts }: { concepts: ConceptRow[] }) {
   if (concepts.length === 0) return null;
+  const sorted = [...concepts].sort((a, b) => a.orderIndex - b.orderIndex);
+  const linkedCount = sorted.filter((c) => c.connections.length > 0).length;
+
   return (
     <Section title="🧠 خريطة المادة">
-      <div className="scrollbar-thin flex gap-3 overflow-x-auto rounded-xl2 border border-ink-100 bg-white p-4">
-        {concepts
-          .sort((a, b) => a.orderIndex - b.orderIndex)
-          .map((c, i) => (
-            <div key={c.id} className="flex items-center gap-3">
-              <div className="w-40 shrink-0 rounded-xl border border-ink-100 bg-ink-50 p-3 text-center">
-                <p className="text-xs font-bold text-ink-800">{c.title}</p>
-              </div>
-              {i < concepts.length - 1 && <span className="text-ink-300">←</span>}
+      <p className="-mt-3 mb-3 text-xs text-ink-400">
+        {linkedCount} من {sorted.length} معلومة لقت لها رابط ذاكرة قوي 🔗
+      </p>
+      <div className="scrollbar-thin flex items-center overflow-x-auto rounded-xl2 border border-ink-100 bg-surface p-6" style={{ perspective: '1000px' }}>
+        {sorted.map((c, i) => {
+          const linked = c.connections.length > 0;
+          return (
+            <div key={c.id} className="flex items-center">
+              <TiltCard maxTilt={8}>
+                <div
+                  className={
+                    'relative w-40 shrink-0 rounded-xl border p-3 text-center ' +
+                    (linked ? 'border-accent-300/40 bg-ink-50 shadow-glow' : 'border-ink-100 bg-ink-50')
+                  }
+                >
+                  <span className="absolute -right-2 -top-2 text-sm">{linked ? '🔗' : '⚪'}</span>
+                  <p className="mb-1 text-lg">{c.atomEmoji}</p>
+                  <p className="text-xs font-bold text-ink-800">{c.title}</p>
+                </div>
+              </TiltCard>
+              {i < sorted.length - 1 && (
+                <div className="relative mx-1 h-px w-10 shrink-0 bg-gradient-to-l from-accent-500/60 via-accent-500/20 to-transparent">
+                  <span
+                    className="animate-ping-slow absolute right-0 top-1/2 h-1.5 w-1.5 rounded-full bg-accent-500"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                </div>
+              )}
             </div>
-          ))}
+          );
+        })}
       </div>
     </Section>
   );

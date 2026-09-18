@@ -48,7 +48,7 @@ export function QuizRunner({ quizId }: { quizId: string }) {
 
   if (result) {
     return (
-      <div className="rounded-xl2 border border-ink-100 bg-white p-8 text-center shadow-card">
+      <div className="rounded-xl2 border border-ink-100 bg-surface p-8 text-center shadow-card">
         <p className="text-4xl font-extrabold text-accent-600">{Math.round(result.scorePct)}%</p>
         <p className="mt-2 text-ink-600">
           {result.graded.filter((g) => g.correct).length} من {result.graded.length} صحيحة
@@ -61,7 +61,7 @@ export function QuizRunner({ quizId }: { quizId: string }) {
     <div className="space-y-6">
       <h1 className="text-xl font-extrabold text-ink-900">{title}</h1>
       {questions.map((q, i) => (
-        <div key={q.id} className="rounded-xl2 border border-ink-100 bg-white p-5 shadow-card">
+        <div key={q.id} className="rounded-xl2 border border-ink-100 bg-surface p-5 shadow-card">
           <div className="mb-2 flex items-center justify-between text-xs font-semibold text-ink-400">
             <span>سؤال {i + 1}</span>
             <span>{KIND_LABEL[q.kind] ?? q.kind}</span>
@@ -71,7 +71,7 @@ export function QuizRunner({ quizId }: { quizId: string }) {
           {q.kind === 'MULTIPLE_CHOICE' && q.choicesJson ? (
             <div className="space-y-2">
               {q.choicesJson.map((choice) => (
-                <label key={choice} className="flex items-center gap-2 rounded-lg border border-ink-100 px-3 py-2 text-sm hover:bg-ink-50">
+                <label key={choice} className="flex items-center gap-2 rounded-lg border border-ink-100 px-3 py-2 text-sm hover:bg-ink-100">
                   <input
                     type="radio"
                     name={q.id}
@@ -101,13 +101,13 @@ export function QuizRunner({ quizId }: { quizId: string }) {
             <input
               value={answers[q.id] ?? ''}
               onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-              className="w-full rounded-lg border border-ink-100 px-3 py-2 text-sm outline-none focus:border-accent-500"
+              className="w-full rounded-lg border border-ink-100 bg-surface px-3 py-2 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-accent-500"
               placeholder="إجابتك..."
             />
           )}
         </div>
       ))}
-      <button onClick={submit} className="w-full rounded-xl bg-ink-900 py-3 text-sm font-bold text-white hover:bg-ink-800">
+      <button onClick={submit} className="w-full rounded-xl bg-accent-500 py-3 text-sm font-bold text-white hover:bg-accent-600">
         سلّم الإجابات
       </button>
     </div>

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireUser, AuthError } from '@/lib/auth';
-import { getStorageDriver } from '@/lib/storage';
 
 async function loadOwnedDocument(userId: string, documentId: string) {
   const document = await db.document.findUnique({ where: { id: documentId } });
@@ -38,7 +37,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const document = await loadOwnedDocument(user.id, id);
     if (!document) return NextResponse.json({ error: 'الملف غير موجود.' }, { status: 404 });
 
-    await getStorageDriver().delete(document.storageKey);
     await db.document.delete({ where: { id } }); // cascades to pages/concepts/connections/quizzes
     await db.auditLog.create({ data: { userId: user.id, action: 'document.deleted', metaJson: { documentId: id } } });
 

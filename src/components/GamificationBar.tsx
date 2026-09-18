@@ -24,7 +24,7 @@ export function GamificationBar() {
   const xpIntoLevel = profile.xp % 200;
 
   return (
-    <div className="flex items-center gap-4 rounded-xl2 border border-ink-100 bg-white px-4 py-2.5 shadow-card">
+    <div className="flex items-center gap-4 rounded-xl2 border border-ink-100 bg-surface px-4 py-2.5 shadow-card">
       <div className="text-center">
         <div className="text-xs font-bold text-ink-400">المستوى</div>
         <div className="text-lg font-extrabold text-ink-900">{profile.level}</div>

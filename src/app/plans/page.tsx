@@ -17,7 +17,7 @@ export default async function PlansPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-8">
-      <NavBar userName={user.name ?? user.email} isAdmin={user.role === 'ADMIN'} />
+      <NavBar userName={user.name ?? user.email} isAdmin={user.role !== 'STUDENT'} />
       <h1 className="mt-8 mb-2 text-2xl font-extrabold text-ink-900">الخطط</h1>
       <p className="mb-8 text-ink-500">اختر الخطة المناسبة لك — الأسعار قابلة للتعديل من لوحة الإدارة.</p>
 
@@ -36,7 +36,7 @@ export default async function PlansPage() {
             <div
               key={plan.id}
               className={
-                'rounded-xl2 border p-6 shadow-card ' + (isActive ? 'border-accent-500 bg-accent-50/40' : 'border-ink-100 bg-white')
+                'rounded-xl2 border p-6 shadow-card ' + (isActive ? 'border-accent-500 bg-accent-50/40' : 'border-ink-100 bg-surface')
               }
             >
               <h2 className="text-lg font-extrabold text-ink-900">{plan.nameAr}</h2>
@@ -54,9 +54,9 @@ export default async function PlansPage() {
               </ul>
 
               {isActive ? (
-                <div className="mt-6 rounded-full bg-ink-900 py-2 text-center text-sm font-bold text-white">خطتك الحالية</div>
+                <div className="mt-6 rounded-full bg-accent-500 py-2 text-center text-sm font-bold text-white">خطتك الحالية</div>
               ) : paymentProviderConfigured ? (
-                <button className="mt-6 w-full rounded-full border border-ink-200 py-2 text-sm font-bold text-ink-800 hover:bg-ink-50">
+                <button className="mt-6 w-full rounded-full border border-ink-200 py-2 text-sm font-bold text-ink-800 hover:bg-ink-100">
                   ترقية
                 </button>
               ) : (

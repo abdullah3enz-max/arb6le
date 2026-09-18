@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { PERMISSIONS, ROLE_DEFAULTS } from '../src/lib/rbac/permissions';
 
 const db = new PrismaClient();
 
@@ -69,6 +70,27 @@ async function main() {
   });
 
   console.log('Seeded plans: FREE, PLUS, PRO');
+
+  for (const p of PERMISSIONS) {
+    await db.permission.upsert({
+      where: { key: p.key },
+      create: { key: p.key, category: p.category, descriptionAr: p.descriptionAr },
+      update: { category: p.category, descriptionAr: p.descriptionAr }
+    });
+  }
+
+  for (const [role, keys] of Object.entries(ROLE_DEFAULTS)) {
+    for (const key of keys ?? []) {
+      const permission = await db.permission.findUniqueOrThrow({ where: { key } });
+      await db.rolePermission.upsert({
+        where: { role_permissionId: { role: role as never, permissionId: permission.id } },
+        create: { role: role as never, permissionId: permission.id },
+        update: {}
+      });
+    }
+  }
+
+  console.log('Seeded permission catalog + role defaults.');
 }
 
 main()

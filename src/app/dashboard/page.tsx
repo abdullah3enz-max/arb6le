@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth';
 import { UploadArea } from '@/components/UploadArea';
 import { DocumentList } from '@/components/DocumentList';
 import { GamificationBar } from '@/components/GamificationBar';
+import { InterestsBar } from '@/components/InterestsBar';
 import { NavBar } from '@/components/NavBar';
 
 export default async function DashboardPage() {
@@ -11,7 +12,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-8">
-      <NavBar userName={user.name ?? user.email} isAdmin={user.role === 'ADMIN'} />
+      <NavBar userName={user.name ?? user.email} isAdmin={user.role !== 'STUDENT'} />
 
       <div className="mt-8 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -19,6 +20,10 @@ export default async function DashboardPage() {
           <p className="mt-1 text-ink-500">وش بنربط لك اليوم؟</p>
         </div>
         <GamificationBar />
+      </div>
+
+      <div className="mt-5">
+        <InterestsBar />
       </div>
 
       <div className="mt-6">

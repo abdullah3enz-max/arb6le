@@ -27,7 +27,7 @@ export function TagInput({
   }
 
   return (
-    <div className="rounded-xl border border-ink-100 bg-white p-2 focus-within:border-accent-500">
+    <div className="rounded-xl border border-ink-100 bg-surface p-2 focus-within:border-accent-500">
       <div className="flex flex-wrap gap-2 p-1">
         {values.map((v) => (
           <span key={v} className="flex items-center gap-1 rounded-full bg-ink-100 px-3 py-1 text-xs font-semibold text-ink-800">
@@ -48,7 +48,7 @@ export function TagInput({
           }}
           onBlur={commit}
           placeholder={placeholder}
-          className="min-w-[120px] flex-1 bg-transparent px-2 py-1 text-sm outline-none"
+          className="min-w-[120px] flex-1 bg-transparent px-2 py-1 text-sm text-ink-900 outline-none placeholder:text-ink-400"
         />
       </div>
     </div>

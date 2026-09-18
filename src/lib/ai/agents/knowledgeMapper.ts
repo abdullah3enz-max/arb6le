@@ -14,6 +14,7 @@ export async function mapConceptRelations(
     userId: opts.userId,
     cacheKey: `${opts.cacheKeyPrefix}:relations`,
     responseFormat: 'json',
+    maxTokens: 4096,
     messages: [
       {
         role: 'system',

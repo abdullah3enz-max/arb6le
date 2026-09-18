@@ -6,16 +6,17 @@ import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
 import { findConnectionCandidates } from '@/lib/ai/agents/connectionFinder';
 import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
 import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
-import { generateMemoryHook } from '@/lib/ai/agents/memoryHookGenerator';
 import { runQualityGate } from '@/lib/ai/qualityGate';
 import { recordRegeneration } from '@/lib/ai/agents/personalizationEngine';
 import { checkAndTrackUsage, EntitlementError } from '@/lib/billing/entitlements';
 
 const schema = z.object({
-  preferredType: z.enum(['CHARACTER', 'EVENT', 'CAUSE_EFFECT', 'SEQUENCE', 'CONTRAST', 'STORY', 'VISUAL', 'COMPARISON']).optional()
+  // "🔄 اربطها بشيء آخر" (item 13) — force a different interest category than last time,
+  // as opposed to "👎 ما فهمته" which just tries again within the same category.
+  differentCategory: z.boolean().default(false)
 });
 
-/** Item 16/18: "ما عجبني الربط" / "ما فهمت" — never returns the same worldRef+type angle twice. */
+/** Item 13/18: "ما فهمته" / "اربطها بشيء آخر" — never returns the same worldRef angle twice. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser();
@@ -45,6 +46,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       {
         title: concept.title,
         summary: concept.summary,
+        atomLabel: concept.atomLabel,
+        atomEmoji: concept.atomEmoji,
         importance: concept.importance,
         conceptType: concept.conceptType,
         sourcePageNumbers: concept.sourcePageIds.map(Number)
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { userId: user.id, cacheKeyPrefix: `regen:${id}:${Date.now()}`, excludeWorldRefs: priorAngles.map((a) => a.worldRef) }
     );
 
-    const filtered = body.preferredType ? candidates.filter((c) => c.type === body.preferredType) : candidates;
+    const filtered = body.differentCategory ? candidates.filter((c) => c.worldCategory !== previous.worldCategory) : candidates;
     const pool = filtered.length > 0 ? filtered : candidates;
 
     for (const candidate of pool.slice(0, 3)) {
@@ -62,27 +65,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const critic = await critiqueConnection(
         candidate,
-        { title: concept.title, summary: concept.summary, importance: concept.importance, conceptType: concept.conceptType, sourcePageNumbers: [] },
+        {
+          title: concept.title,
+          summary: concept.summary,
+          atomLabel: concept.atomLabel,
+          atomEmoji: concept.atomEmoji,
+          importance: concept.importance,
+          conceptType: concept.conceptType,
+          sourcePageNumbers: []
+        },
         { userId: user.id }
       );
       const gate = runQualityGate(candidate, critic);
       if (!gate.approved) continue;
 
-      const polishedHook = await generateMemoryHook(
-        candidate,
-        { title: concept.title, summary: concept.summary, importance: concept.importance, conceptType: concept.conceptType, sourcePageNumbers: [] },
-        { userId: user.id }
-      );
-
       const created = await db.connection.create({
         data: {
           conceptId: concept.id,
-          type: candidate.type,
+          associationLevel: candidate.associationLevel,
           worldCategory: candidate.worldCategory,
           worldRef: candidate.worldRef,
-          headline: candidate.headline,
-          relationExplain: candidate.relationExplain,
-          memoryHook: polishedHook,
+          atomEmoji: candidate.atomEmoji,
+          atomLabel: candidate.atomLabel,
+          bridgeLine: candidate.bridgeLine,
+          whyOneLiner: candidate.whyOneLiner,
           claimType: candidate.claimType,
           score: gate.score,
           scoreBreakdown: candidate.scoreBreakdown as unknown as object,
@@ -106,7 +112,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({
       connection: null,
-      message: 'ما لقيت ربط قوي وصادق ثاني لهذا المفهوم، بس ما راح أخترع لك واحد.'
+      message: 'ما لقيت رابط قوي وصادق ثاني لهذا المفهوم، بس ما راح أخترع لك واحد.'
     });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: 'يجب تسجيل الدخول.' }, { status: 401 });

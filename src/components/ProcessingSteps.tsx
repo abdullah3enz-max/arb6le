@@ -1,16 +1,15 @@
 'use client';
 
 // Mirrors Document.status exactly (src/lib/ai/pipeline.ts) — every label here reflects a real
-// pipeline stage that actually ran, never a canned animation (item 38).
+// pipeline stage that actually ran, never a canned animation (item 38). Text extraction itself
+// happens client-side before upload (see UploadArea's own extraction progress UI), so the first
+// server-side stage is straight to concept mapping.
 const STAGES: { key: string; label: string }[] = [
-  { key: 'UPLOADED', label: '📄 استلمنا ملفك' },
-  { key: 'EXTRACTING', label: '📄 نقرأ السلايدات...' },
-  { key: 'OCR', label: '🔎 نقرأ الصور داخل السلايدات...' },
-  { key: 'PARSING', label: '🧩 ننظم النصوص والجداول...' },
-  { key: 'MAPPING_CONCEPTS', label: '🧠 نفهم المفاهيم...' },
-  { key: 'FINDING_CONNECTIONS', label: '🔎 نبحث عن روابط مناسبة...' },
-  { key: 'FACT_CHECKING', label: '🔗 نختبر قوة الروابط ونتحقق من الحقائق...' },
-  { key: 'GENERATING', label: '✨ نجهز طريقة الحفظ والاختبارات...' },
+  { key: 'UPLOADED', label: '📄 استلمنا النص المستخرج' },
+  { key: 'MAPPING_CONCEPTS', label: '🧠 نستخرج المعلومات المهمة...' },
+  { key: 'FINDING_CONNECTIONS', label: '🔎 نبحث عن أفضل الروابط...' },
+  { key: 'FACT_CHECKING', label: '🔗 نتحقق من الحقائق ونختبر قوة الروابط...' },
+  { key: 'GENERATING', label: '✨ نجهز الاختبارات وبطاقات المراجعة...' },
   { key: 'READY', label: '✅ جاهز!' }
 ];
 

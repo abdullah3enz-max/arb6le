@@ -43,11 +43,6 @@ export interface SearchProvider {
   search(query: string): Promise<SearchResultItem[]>;
 }
 
-export interface OcrProvider {
-  readonly name: string;
-  recognize(imageBuffer: Buffer): Promise<string>;
-}
-
 export interface EmbeddingProvider {
   readonly name: string;
   embed(texts: string[]): Promise<number[][]>;

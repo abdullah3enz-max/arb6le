@@ -3,7 +3,7 @@ import type { FeedbackReaction } from '@prisma/client';
 
 /**
  * Item 17: Personalization Loop. Pure bookkeeping, no LLM call — every user interaction
- * nudges Preference.weight, which connectionFinder.ts reads back as `preferenceMatch` bonus.
+ * nudges Preference.weight, which connectionFinder.ts reads back as a `familiarity` bonus.
  */
 const REACTION_DELTA: Record<FeedbackReaction, number> = {
   LOVE: 20,
@@ -17,10 +17,10 @@ export async function applyFeedbackToPreferences(params: {
   userId: string;
   reaction: FeedbackReaction;
   worldCategory: string;
-  connectionType: string;
+  associationLevel: string;
 }) {
   const delta = REACTION_DELTA[params.reaction];
-  const keys = [`world:${params.worldCategory.toLowerCase()}`, `connection_type:${params.connectionType.toLowerCase()}`];
+  const keys = [`world:${params.worldCategory.toLowerCase()}`, `association_level:${params.associationLevel.toLowerCase()}`];
 
   await Promise.all(
     keys.map((key) =>

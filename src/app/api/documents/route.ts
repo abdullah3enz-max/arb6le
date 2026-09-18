@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { db } from '@/lib/db';
 import { requireUser, AuthError } from '@/lib/auth';
-import { validateUploadedFile, FileValidationError } from '@/lib/security/fileValidation';
-import { getStorageDriver } from '@/lib/storage';
+import { validateExtractedDocument, FileValidationError, type ExtractedPageInput } from '@/lib/security/fileValidation';
 import { checkAndTrackUsage, getActivePlan, EntitlementError } from '@/lib/billing/entitlements';
 import { enforceRateLimit, RateLimitError } from '@/lib/security/rateLimit';
 import { runPipeline } from '@/lib/ai/pipeline';
@@ -24,28 +23,30 @@ export async function GET() {
   }
 }
 
+/**
+ * The document's text is extracted entirely in the browser (src/lib/client/extractDocument.ts)
+ * before this ever runs — this route only ever receives already-extracted text as JSON, never
+ * a file. That is a deliberate architecture choice: it removes any need for file storage
+ * (temporary or permanent) and the privacy/cost tradeoffs that come with it.
+ */
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     enforceRateLimit(`upload:${user.id}`, 10, 60_000);
 
     const plan = await getActivePlan(user.id);
-    const form = await req.formData();
-    const file = form.get('file');
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: 'لم يتم إرسال ملف.' }, { status: 400 });
+    const body = await req.json().catch(() => null);
+    const fileName = typeof body?.fileName === 'string' ? body.fileName.trim() : '';
+    if (!fileName) {
+      return NextResponse.json({ error: 'اسم الملف مفقود.' }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const fileType = validateUploadedFile({
-      fileName: file.name,
-      mimeType: file.type,
-      sizeBytes: buffer.byteLength,
-      buffer,
-      planCode: plan.code
-    });
+    const fileType = validateExtractedDocument({ fileType: body?.fileType, pages: body?.pages, planCode: plan.code });
+    const pages = body.pages as ExtractedPageInput[];
 
-    const contentHash = createHash('sha256').update(buffer).digest('hex');
+    const contentHash = createHash('sha256')
+      .update(pages.map((p) => `${p.pageNumber}:${p.rawText}`).join('\n'))
+      .digest('hex');
 
     const duplicate = await db.document.findUnique({ where: { userId_contentHash: { userId: user.id, contentHash } } });
     if (duplicate) {
@@ -54,27 +55,32 @@ export async function POST(req: NextRequest) {
 
     await checkAndTrackUsage(user.id, 'documents', 'maxDocuments');
 
-    const storageKey = `${user.id}/${contentHash}-${file.name}`;
-    await getStorageDriver().write(storageKey, buffer);
+    const totalChars = pages.reduce((sum, p) => sum + p.rawText.length, 0);
 
     const document = await db.document.create({
       data: {
         userId: user.id,
-        fileName: file.name,
+        fileName,
         fileType,
-        fileSizeKb: Math.round(buffer.byteLength / 1024),
-        storageKey,
+        textSizeKb: Math.max(1, Math.round(totalChars / 1024)),
         contentHash,
-        status: 'UPLOADED'
+        pageCount: pages.length,
+        status: 'UPLOADED',
+        pages: {
+          create: pages.map((p) => ({
+            pageNumber: p.pageNumber,
+            rawText: p.rawText,
+            usedOcr: Boolean(p.usedOcr)
+          }))
+        }
       }
     });
 
     await db.auditLog.create({ data: { userId: user.id, action: 'document.uploaded', metaJson: { documentId: document.id } } });
 
-    // Fire-and-forget: the pipeline runs in the background and updates Document.status as it
-    // progresses; the client polls GET /api/documents/[id] to drive the ProcessingSteps UI.
-    // A real deployment should hand this to a queue (BullMQ/Redis) instead of an in-process
-    // promise — see docs/ARCHITECTURE.md §10.
+    // Fire-and-forget: pages are already persisted above, so the pipeline starts straight at
+    // concept extraction. A real deployment should hand this to a queue (Inngest/BullMQ)
+    // instead of an in-process promise — see docs/ARCHITECTURE.md §10.
     runPipeline(document.id).catch((err) => console.error('Pipeline failed', document.id, err));
 
     return NextResponse.json({ id: document.id, duplicate: false });

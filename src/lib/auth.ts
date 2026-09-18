@@ -74,12 +74,4 @@ export async function requireUser() {
   return user;
 }
 
-export async function requireAdmin() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN') {
-    throw new AuthError('FORBIDDEN');
-  }
-  return user;
-}
-
 export class AuthError extends Error {}

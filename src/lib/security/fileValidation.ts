@@ -1,48 +1,66 @@
-const ALLOWED_MIME: Record<string, 'PDF' | 'PPT' | 'PPTX'> = {
-  'application/pdf': 'PDF',
-  'application/vnd.ms-powerpoint': 'PPT',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX'
+const ALLOWED_TYPES = ['PDF', 'PPTX'] as const;
+type AllowedType = (typeof ALLOWED_TYPES)[number];
+type PlanCode = 'FREE' | 'PLUS' | 'PRO';
+
+// Text is extracted in the browser (see src/lib/client/extractDocument.ts) — the server never
+// receives raw file bytes, so plan limits are expressed in the thing that actually drives cost
+// here (pages / extracted text volume feeding the LLM pipeline) instead of file megabytes.
+const MAX_PAGES_BY_PLAN: Record<PlanCode, number> = {
+  FREE: 60,
+  PLUS: 150,
+  PRO: 400
 };
 
-const MAX_SIZE_BY_PLAN: Record<'FREE' | 'PLUS' | 'PRO', number> = {
-  FREE: 10 * 1024 * 1024,
-  PLUS: 40 * 1024 * 1024,
-  PRO: 150 * 1024 * 1024
+const MAX_CHARS_BY_PLAN: Record<PlanCode, number> = {
+  FREE: 300_000,
+  PLUS: 800_000,
+  PRO: 2_000_000
 };
 
 export class FileValidationError extends Error {}
 
-const MAGIC_BYTES: Array<{ type: 'PDF' | 'PPTX'; bytes: number[] }> = [
-  { type: 'PDF', bytes: [0x25, 0x50, 0x44, 0x46] }, // %PDF
-  { type: 'PPTX', bytes: [0x50, 0x4b, 0x03, 0x04] } // PK.. (zip container)
-];
+export interface ExtractedPageInput {
+  pageNumber: number;
+  rawText: string;
+  usedOcr?: boolean;
+}
 
-/** Validates by content signature, not just the client-supplied MIME/extension (item 40). */
-export function validateUploadedFile(params: {
-  fileName: string;
-  mimeType: string;
-  sizeBytes: number;
-  buffer: Buffer;
+/**
+ * Validates a document's already-extracted text (item: no raw file ever reaches the server).
+ * The browser's pdf.js/JSZip parsers already threw if the file wasn't a real PDF/PPTX, so this
+ * only guards plan limits and payload shape — not file-content sniffing.
+ */
+export function validateExtractedDocument(params: {
+  fileType: unknown;
+  pages: unknown;
   planCode: string;
-}): 'PDF' | 'PPT' | 'PPTX' {
-  const declaredType = ALLOWED_MIME[params.mimeType];
-  if (!declaredType) {
-    throw new FileValidationError('نوع الملف غير مدعوم. اسمح فقط بـ PDF أو PPT أو PPTX.');
+}): AllowedType {
+  if (typeof params.fileType !== 'string' || !ALLOWED_TYPES.includes(params.fileType as AllowedType)) {
+    throw new FileValidationError('نوع الملف غير مدعوم. يسمح فقط بـ PDF أو PPTX.');
+  }
+  if (!Array.isArray(params.pages) || params.pages.length === 0) {
+    throw new FileValidationError('ما وصل أي نص مستخرج من الملف.');
   }
 
-  const maxSize = MAX_SIZE_BY_PLAN[params.planCode as 'FREE' | 'PLUS' | 'PRO'] ?? MAX_SIZE_BY_PLAN.FREE;
-  if (params.sizeBytes > maxSize) {
-    throw new FileValidationError(`حجم الملف يتجاوز الحد المسموح لخطتك (${Math.round(maxSize / 1024 / 1024)}MB).`);
-  }
-
-  if (declaredType !== 'PPT') {
-    const signature = MAGIC_BYTES.find((m) => m.type === declaredType);
-    const header = Array.from(params.buffer.subarray(0, 4));
-    const matches = signature?.bytes.every((b, i) => header[i] === b);
-    if (!matches) {
-      throw new FileValidationError('محتوى الملف لا يطابق نوعه المُعلن — قد يكون الملف تالفًا أو غير آمن.');
+  const pages = params.pages as ExtractedPageInput[];
+  for (const page of pages) {
+    if (!page || typeof page.pageNumber !== 'number' || typeof page.rawText !== 'string') {
+      throw new FileValidationError('بيانات الملف المستخرجة غير صالحة.');
     }
   }
 
-  return declaredType;
+  const plan: PlanCode = params.planCode in MAX_PAGES_BY_PLAN ? (params.planCode as PlanCode) : 'FREE';
+
+  const maxPages = MAX_PAGES_BY_PLAN[plan];
+  if (pages.length > maxPages) {
+    throw new FileValidationError(`عدد الصفحات (${pages.length}) يتجاوز الحد المسموح لخطتك (${maxPages} صفحة).`);
+  }
+
+  const totalChars = pages.reduce((sum, p) => sum + p.rawText.length, 0);
+  const maxChars = MAX_CHARS_BY_PLAN[plan];
+  if (totalChars > maxChars) {
+    throw new FileValidationError('حجم النص المستخرج كبير جدًا لخطتك الحالية — رقّي خطتك أو قسّم الملف.');
+  }
+
+  return params.fileType as AllowedType;
 }

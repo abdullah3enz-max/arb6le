@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
 
     const token = await createSessionToken(user.id);
     await setSessionCookie(token);
+    await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
     return NextResponse.json({ id: user.id, email: user.email, name: user.name, role: user.role });
   } catch (error) {

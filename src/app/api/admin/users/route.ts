@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { requireAdmin, AuthError } from '@/lib/auth';
+import { AuthError } from '@/lib/auth';
+import { requirePermission, logAudit } from '@/lib/rbac';
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('users.view');
     const users = await db.user.findMany({
+      where: { role: 'STUDENT' },
       select: {
         id: true,
         email: true,
@@ -14,6 +16,7 @@ export async function GET() {
         status: true,
         role: true,
         createdAt: true,
+        lastLoginAt: true,
         subscriptions: { where: { status: 'ACTIVE' }, include: { plan: true }, take: 1 }
       },
       orderBy: { createdAt: 'desc' },
@@ -35,22 +38,29 @@ const patchSchema = z.object({
 /** Item 28: تعطيل مستخدم / تغيير الخطة, from the Admin Dashboard. */
 export async function PATCH(req: NextRequest) {
   try {
-    const admin = await requireAdmin();
     const body = patchSchema.parse(await req.json());
 
     if (body.status) {
+      const admin = await requirePermission('users.suspend');
       await db.user.update({ where: { id: body.userId }, data: { status: body.status } });
-      await db.auditLog.create({
-        data: { userId: admin.id, action: 'admin.user_status_changed', metaJson: { target: body.userId, status: body.status } }
+      await logAudit({
+        userId: admin.id,
+        action: 'admin.user_status_changed',
+        metaJson: { target: body.userId, status: body.status },
+        req
       });
     }
 
     if (body.planCode) {
+      const admin = await requirePermission('users.edit');
       const plan = await db.plan.findUniqueOrThrow({ where: { code: body.planCode } });
       await db.subscription.updateMany({ where: { userId: body.userId, status: 'ACTIVE' }, data: { status: 'CANCELED' } });
       await db.subscription.create({ data: { userId: body.userId, planId: plan.id, status: 'ACTIVE', provider: null } });
-      await db.auditLog.create({
-        data: { userId: admin.id, action: 'admin.plan_changed', metaJson: { target: body.userId, planCode: body.planCode } }
+      await logAudit({
+        userId: admin.id,
+        action: 'admin.plan_changed',
+        metaJson: { target: body.userId, planCode: body.planCode },
+        req
       });
     }
 

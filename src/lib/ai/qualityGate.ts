@@ -1,4 +1,4 @@
-import { computeConnectionScore, passesThreshold, type ScoreBreakdown } from '@/lib/ai/scoring';
+import { computeConnectionScore, passesThreshold } from '@/lib/ai/scoring';
 import type { ConnectionCandidate, CriticVerdict } from '@/lib/ai/types';
 
 export interface GateResult {
@@ -9,19 +9,19 @@ export interface GateResult {
 }
 
 /**
- * Final Quality Gate (item 30) — the single place that decides whether a connection is ever
- * shown. Nothing bypasses this: not a high score with a critic rejection, not a critic
- * approval with a low score. Both must pass.
+ * Final Quality Gate — the single place that decides whether a bridge is ever shown.
+ * Nothing bypasses this: not a high score with a critic rejection, not a critic approval
+ * with a low score. Both must pass, and an ungrounded factual claim never passes either way.
  */
 export function runQualityGate(candidate: ConnectionCandidate, critic: CriticVerdict): GateResult {
-  const score = computeConnectionScore(candidate.scoreBreakdown as ScoreBreakdown);
+  const score = computeConnectionScore(candidate.scoreBreakdown);
 
   if (critic.verdict === 'REJECT') {
     return {
       approved: false,
       score,
       status: 'REJECTED',
-      rejectionReason: `Critic rejected (Q${critic.failedQuestion}): ${critic.reason}`
+      rejectionReason: `Critic rejected (${critic.failedCheck ?? 'unspecified'}): ${critic.reason}`
     };
   }
 
@@ -34,12 +34,12 @@ export function runQualityGate(candidate: ConnectionCandidate, critic: CriticVer
     };
   }
 
-  if (candidate.claimType !== 'FACT' && candidate.sources.every((s) => s.sourceType === 'USER_PROVIDED')) {
+  if (candidate.sources.every((s) => s.sourceType === 'USER_PROVIDED')) {
     return {
       approved: false,
       score,
       status: 'REJECTED',
-      rejectionReason: 'No independent source backs this non-fact claim.'
+      rejectionReason: 'No independent source backs the real-world fact this bridge relies on.'
     };
   }
 

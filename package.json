@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "اربط لي يا حب ❤️ (ERBOTLI) — Personalized Memory Connection Platform",
   "scripts": {
+    "predev": "node scripts/copy-pdf-worker.js",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-pdf-worker.js",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -26,12 +28,11 @@
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.6",
     "clsx": "^2.1.1",
-    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.7.76",
     "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/pdf-parse": "^1.1.4",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",

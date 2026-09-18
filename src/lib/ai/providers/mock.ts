@@ -42,19 +42,21 @@ function mockPayloadFor(agent: string): unknown {
           {
             title: '[MOCK] Concept placeholder',
             summary: 'شغّل ANTHROPIC_API_KEY لرؤية استخراج حقيقي للمفاهيم من السلايدات.',
+            atomLabel: '',
+            atomEmoji: '🧠',
             importance: 50,
             conceptType: 'DEFINITION'
           }
         ]
       };
     case 'connection_finder':
-      return { candidates: [] }; // mock never invents a world-connection — respects Fact Grounding
+      return { candidates: [] }; // mock never invents a bridge — respects Fact Grounding
     case 'fact_checker':
       return { verified: false, reason: 'MOCK_PROVIDER_NO_VERIFICATION_PERFORMED' };
     case 'connection_critic':
       return {
         verdict: 'REJECT',
-        failedQuestion: 6,
+        failedCheck: 'hallucination',
         reason: 'Mock provider cannot verify hallucination-freedom — auto-rejected by policy.'
       };
     default:

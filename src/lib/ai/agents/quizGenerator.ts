@@ -23,6 +23,7 @@ export async function generateQuiz(
     userId: opts.userId,
     cacheKey: `${opts.cacheKeyPrefix}:quiz`,
     responseFormat: 'json',
+    maxTokens: 4096,
     messages: [
       {
         role: 'system',
@@ -31,7 +32,8 @@ export async function generateQuiz(
           'عملي إذا كان المجال مناسبًا، واسترجاع مباشر) من هذه المفاهيم الأكاديمية فقط — لا تربطها ' +
           'بأي عالم خارجي هنا. أرجع JSON: {"questions": [{"conceptTitle","kind":' +
           '"MULTIPLE_CHOICE|TRUE_FALSE|FILL_BLANK|SCENARIO|RECALL","prompt","choices"?,' +
-          '"correctAnswer","explanation"}]}'
+          '"correctAnswer","explanation"}]}. مهم: correctAnswer دائمًا نص (string) حتى لأسئلة ' +
+          'TRUE_FALSE — استخدم "صحيح" أو "خطأ" كنص، ممنوع ترجع true/false كـ boolean.'
       },
       { role: 'user', content: JSON.stringify(concepts.map((c) => ({ title: c.title, summary: c.summary, type: c.conceptType }))) }
     ]

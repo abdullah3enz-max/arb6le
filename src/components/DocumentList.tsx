@@ -14,10 +14,9 @@ interface DocRow {
   errorMessage: string | null;
 }
 
-const DONE_STATES = new Set(['READY', 'FAILED']);
-
 export function DocumentList() {
   const [docs, setDocs] = useState<DocRow[] | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   async function load() {
     const res = await fetch('/api/documents');
@@ -29,7 +28,9 @@ export function DocumentList() {
     load();
     const interval = setInterval(() => {
       setDocs((current) => {
-        if (current && current.every((d) => DONE_STATES.has(d.status))) {
+        // Keep polling through FAILED too, so a "retry" click (which flips a document back to
+        // a working stage) is picked up automatically without restarting this interval.
+        if (current && current.every((d) => d.status === 'READY')) {
           clearInterval(interval);
           return current;
         }
@@ -40,6 +41,18 @@ export function DocumentList() {
     return () => clearInterval(interval);
   }, []);
 
+  async function retry(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setRetrying(id);
+    try {
+      await fetch(`/api/documents/${id}/retry`, { method: 'POST' });
+      await load();
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   if (!docs) return <p className="text-sm text-ink-400">جاري التحميل...</p>;
   if (docs.length === 0) return <p className="text-sm text-ink-400">لسه ما رفعت شي. ارفع أول سلايد لك فوق ⬆️</p>;
 
@@ -49,7 +62,7 @@ export function DocumentList() {
         <Link
           key={doc.id}
           href={`/documents/${doc.id}`}
-          className="block rounded-xl2 border border-ink-100 bg-white p-4 shadow-card transition hover:border-accent-200"
+          className="block rounded-xl2 border border-ink-100 bg-surface p-4 shadow-card transition hover:border-accent-200"
         >
           <div className="flex items-center justify-between">
             <div>
@@ -60,9 +73,21 @@ export function DocumentList() {
             </div>
             <span className="text-xs font-semibold text-ink-400">{new Date(doc.createdAt).toLocaleDateString('ar-SA')}</span>
           </div>
-          {doc.status !== 'READY' && (
+          {doc.status !== 'READY' && doc.status !== 'FAILED' && (
             <div className="mt-3 border-t border-ink-100 pt-3">
               <ProcessingSteps status={doc.status} />
+            </div>
+          )}
+          {doc.status === 'FAILED' && (
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-ink-100 pt-3">
+              <p className="text-sm font-semibold text-accent-600">حصل خطأ في المعالجة.</p>
+              <button
+                onClick={(e) => retry(e, doc.id)}
+                disabled={retrying === doc.id}
+                className="shrink-0 rounded-full bg-accent-500 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-accent-600 disabled:opacity-50"
+              >
+                {retrying === doc.id ? 'جاري المحاولة...' : '🔄 أعد المحاولة'}
+              </button>
             </div>
           )}
         </Link>

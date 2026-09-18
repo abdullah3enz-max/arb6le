@@ -1,20 +1,14 @@
 import { db } from '@/lib/db';
-import { parseDocument } from '@/lib/ai/agents/documentParser';
 import { extractConcepts } from '@/lib/ai/agents/conceptExtractor';
 import { mapConceptRelations } from '@/lib/ai/agents/knowledgeMapper';
 import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
 import { findConnectionCandidates } from '@/lib/ai/agents/connectionFinder';
 import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
 import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
-import { generateMemoryHook } from '@/lib/ai/agents/memoryHookGenerator';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
 import { runQualityGate } from '@/lib/ai/qualityGate';
-import type { DocumentType } from '@prisma/client';
 
 export type PipelineStage =
-  | 'EXTRACTING'
-  | 'OCR'
-  | 'PARSING'
   | 'MAPPING_CONCEPTS'
   | 'FINDING_CONNECTIONS'
   | 'FACT_CHECKING'
@@ -23,32 +17,20 @@ export type PipelineStage =
   | 'FAILED';
 
 /**
- * Orchestrates STEP 1–13 end to end for one document. Persists `Document.status` after each
- * stage so the UI's ProcessingSteps component reflects what is actually happening (item 38) —
- * never a canned animation disconnected from real progress.
+ * Orchestrates concept extraction through quiz generation for one document. Text extraction
+ * happens client-side before upload (src/lib/client/extractDocument.ts) and DocumentPage rows
+ * already exist by the time this runs — so this starts straight at concept mapping. Persists
+ * `Document.status` after each stage so the UI's ProcessingSteps component reflects what is
+ * actually happening (item 38), never a canned animation disconnected from real progress.
  */
 export async function runPipeline(documentId: string) {
   const document = await db.document.findUniqueOrThrow({ where: { id: documentId } });
 
   try {
-    await setStage(documentId, 'EXTRACTING');
-    const buffer = await readStoredFile(document.storageKey);
-    const pages = await parseDocument(buffer, document.fileType as DocumentType as 'PDF' | 'PPT' | 'PPTX');
-
-    if (pages.some((p) => p.usedOcr)) await setStage(documentId, 'OCR');
-
-    await setStage(documentId, 'PARSING');
-    await db.documentPage.createMany({
-      data: pages.map((p) => ({
-        documentId,
-        pageNumber: p.pageNumber,
-        rawText: p.rawText,
-        usedOcr: p.usedOcr,
-        tables: (p.tables ?? null) as object | undefined
-      })),
-      skipDuplicates: true
-    });
-    await db.document.update({ where: { id: documentId }, data: { pageCount: pages.length } });
+    const pages = await db.documentPage.findMany({ where: { documentId }, orderBy: { pageNumber: 'asc' } });
+    if (pages.length === 0) {
+      throw new Error('لا يوجد نص مستخرج لهذا الملف — يُفترض أن يُستخرج النص في المتصفح قبل الرفع.');
+    }
 
     await setStage(documentId, 'MAPPING_CONCEPTS');
     const cacheKeyPrefix = document.contentHash;
@@ -62,6 +44,8 @@ export async function runPipeline(documentId: string) {
             documentId,
             title: c.title,
             summary: c.summary,
+            atomLabel: c.atomLabel,
+            atomEmoji: c.atomEmoji,
             importance: c.importance,
             conceptType: c.conceptType,
             sourcePageIds: c.sourcePageNumbers.map(String),
@@ -87,28 +71,39 @@ export async function runPipeline(documentId: string) {
     }
 
     await setStage(documentId, 'GENERATING');
-    const quizQuestions = await generateQuiz(extracted, { userId: document.userId, cacheKeyPrefix });
-    if (quizQuestions.length > 0) {
-      const quiz = await db.quiz.create({
-        data: { userId: document.userId, documentId, title: `اختبار: ${document.fileName}` }
-      });
-      await db.quizQuestion.createMany({
-        data: quizQuestions
-          .map((q) => {
-            const concept = savedConcepts.find((c) => c.title === q.conceptTitle);
-            if (!concept) return null;
-            return {
-              quizId: quiz.id,
-              conceptId: concept.id,
-              kind: q.kind,
-              prompt: q.prompt,
-              choicesJson: (q.choices ?? null) as object | undefined,
-              correctAnswer: q.correctAnswer,
-              explanation: q.explanation
-            };
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null)
-      });
+    // Quiz generation is best-effort: the concepts and connections above are the core value
+    // and already committed. A quiz-step failure (a model returning an unexpected shape, a
+    // transient provider error) must not discard minutes of real, already-approved work — it
+    // just means this document ends up with no quiz yet, which the UI already handles.
+    try {
+      const quizQuestions = await generateQuiz(extracted, { userId: document.userId, cacheKeyPrefix });
+      if (quizQuestions.length > 0) {
+        const quiz = await db.quiz.create({
+          data: { userId: document.userId, documentId, title: `اختبار: ${document.fileName}` }
+        });
+        await db.quizQuestion.createMany({
+          data: quizQuestions
+            .map((q) => {
+              const concept = savedConcepts.find((c) => c.title === q.conceptTitle);
+              if (!concept) return null;
+              return {
+                quizId: quiz.id,
+                conceptId: concept.id,
+                kind: q.kind,
+                prompt: q.prompt,
+                choicesJson: (q.choices ?? null) as object | undefined,
+                // Defensive: some models return TRUE_FALSE answers as a JSON boolean despite the
+                // prompt asking for a string — coerce rather than let a type-mismatch this far
+                // into a multi-minute run discard everything already generated.
+                correctAnswer: String(q.correctAnswer),
+                explanation: q.explanation
+              };
+            })
+            .filter((x): x is NonNullable<typeof x> => x !== null)
+        });
+      }
+    } catch (quizError) {
+      console.error('Quiz generation failed (non-fatal):', documentId, quizError);
     }
 
     await setStage(documentId, 'READY');
@@ -141,12 +136,13 @@ async function findAndSaveBestConnection(
       await db.connection.create({
         data: {
           conceptId: concept.id,
-          type: candidate.type,
+          associationLevel: candidate.associationLevel,
           worldCategory: candidate.worldCategory,
           worldRef: candidate.worldRef,
-          headline: candidate.headline,
-          relationExplain: candidate.relationExplain,
-          memoryHook: candidate.memoryHook,
+          atomEmoji: candidate.atomEmoji,
+          atomLabel: candidate.atomLabel,
+          bridgeLine: candidate.bridgeLine,
+          whyOneLiner: candidate.whyOneLiner,
           claimType: candidate.claimType,
           score: gate.score,
           scoreBreakdown: candidate.scoreBreakdown as unknown as object,
@@ -157,16 +153,16 @@ async function findAndSaveBestConnection(
       continue; // try the next candidate instead of stopping at the first rejection
     }
 
-    const polishedHook = await generateMemoryHook(candidate, extractedConcept, { userId });
     await db.connection.create({
       data: {
         conceptId: concept.id,
-        type: candidate.type,
+        associationLevel: candidate.associationLevel,
         worldCategory: candidate.worldCategory,
         worldRef: candidate.worldRef,
-        headline: candidate.headline,
-        relationExplain: candidate.relationExplain,
-        memoryHook: polishedHook,
+        atomEmoji: candidate.atomEmoji,
+        atomLabel: candidate.atomLabel,
+        bridgeLine: candidate.bridgeLine,
+        whyOneLiner: candidate.whyOneLiner,
         claimType: candidate.claimType,
         score: gate.score,
         scoreBreakdown: candidate.scoreBreakdown as unknown as object,
@@ -182,7 +178,7 @@ async function findAndSaveBestConnection(
         }
       }
     });
-    return; // one strong connection per concept (item 14) — quality over quantity
+    return; // one strong bridge per fact (item 14) — quality over quantity
   }
   // No candidate survived fact-check/critic/threshold: this concept explicitly gets no
   // connection. The UI must render this as "ما لقيت ربط قوي وصادق..." (item 9), not silence.
@@ -190,9 +186,4 @@ async function findAndSaveBestConnection(
 
 async function setStage(documentId: string, stage: PipelineStage) {
   await db.document.update({ where: { id: documentId }, data: { status: stage } });
-}
-
-async function readStoredFile(storageKey: string): Promise<Buffer> {
-  const { getStorageDriver } = await import('@/lib/storage');
-  return getStorageDriver().read(storageKey);
 }

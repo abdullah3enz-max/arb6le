@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { requireAdmin, AuthError } from '@/lib/auth';
+import { AuthError } from '@/lib/auth';
+import { requirePermission, logAudit } from '@/lib/rbac';
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('subscriptions.view');
     const plans = await db.plan.findMany({ orderBy: { priceMonthlyCents: 'asc' } });
     return NextResponse.json({ plans });
   } catch (error) {
@@ -23,7 +24,7 @@ const schema = z.object({
 /** Item 25: "اجعل الأسعار قابلة للتعديل من Admin Dashboard." */
 export async function PATCH(req: NextRequest) {
   try {
-    const admin = await requireAdmin();
+    const admin = await requirePermission('subscriptions.edit');
     const body = schema.parse(await req.json());
 
     const plan = await db.plan.update({
@@ -34,7 +35,7 @@ export async function PATCH(req: NextRequest) {
       }
     });
 
-    await db.auditLog.create({ data: { userId: admin.id, action: 'admin.plan_updated', metaJson: { code: body.code } } });
+    await logAudit({ userId: admin.id, action: 'admin.plan_updated', metaJson: { code: body.code }, req });
 
     return NextResponse.json({ plan });
   } catch (error) {

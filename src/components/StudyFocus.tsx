@@ -8,7 +8,7 @@ interface ReviewItem {
   concept: {
     title: string;
     summary: string;
-    connections: { relationExplain: string; memoryHook: string; worldRef: string }[];
+    connections: { atomEmoji: string; bridgeLine: string; worldRef: string }[];
   } | null;
   flashcard: { front: string; back: string } | null;
 }
@@ -57,7 +57,7 @@ export function StudyFocus() {
   const connection = current.concept?.connections?.[0];
 
   return (
-    <div className="rounded-xl2 border border-ink-100 bg-white p-8 shadow-card">
+    <div className="rounded-xl2 border border-ink-100 bg-surface p-8 shadow-card">
       <p className="mb-1 text-xs font-semibold text-ink-400">
         {index + 1} / {items.length}
       </p>
@@ -65,19 +65,18 @@ export function StudyFocus() {
 
       {!revealed ? (
         <>
-          <p className="mb-6 text-sm text-ink-500">وش الرابط؟ حاول تتذكره قبل ما نعرضه لك.</p>
-          <button onClick={() => setRevealed(true)} className="w-full rounded-xl bg-ink-900 py-3 text-sm font-bold text-white hover:bg-ink-800">
-            أظهر الرابط
+          <p className="mb-6 text-sm text-ink-500">وش الجسر؟ حاول تتذكره قبل ما نعرضه لك.</p>
+          <button onClick={() => setRevealed(true)} className="w-full rounded-xl bg-accent-500 py-3 text-sm font-bold text-white hover:bg-accent-600">
+            أظهر الجسر
           </button>
         </>
       ) : (
         <>
-          <div className="mb-6 rounded-xl bg-accent-50/60 p-4 text-sm text-ink-800">
+          <div className="mb-6 rounded-xl bg-accent-50/60 p-4 text-center text-lg font-extrabold text-ink-900">
             {connection ? (
-              <>
-                <p className="mb-1 font-bold text-accent-700">{connection.worldRef}</p>
-                <p>{connection.memoryHook}</p>
-              </>
+              <span>
+                {connection.atomEmoji} {connection.bridgeLine}
+              </span>
             ) : (
               <p>{current.concept?.summary ?? current.flashcard?.back}</p>
             )}
@@ -94,7 +93,7 @@ export function StudyFocus() {
               <button
                 key={key}
                 onClick={() => rate(key)}
-                className="rounded-xl border border-ink-100 py-2 text-xs font-bold text-ink-700 hover:bg-ink-50"
+                className="rounded-xl border border-ink-100 py-2 text-xs font-bold text-ink-700 hover:bg-ink-100"
               >
                 {label}
               </button>

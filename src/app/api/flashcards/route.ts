@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     }
 
     const connection = concept.connections[0];
-    const back = connection ? `${concept.summary}\n\n💡 ${connection.memoryHook}` : concept.summary;
+    const back = connection ? `${concept.summary}\n\n${connection.atomEmoji} ${connection.bridgeLine}` : concept.summary;
 
     const flashcard = await db.flashcard.create({
       data: {

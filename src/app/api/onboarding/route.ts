@@ -3,19 +3,69 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { requireUser, AuthError } from '@/lib/auth';
 
+const titleWithChars = z.object({ title: z.string(), favoriteChars: z.array(z.string()).default([]) });
+
 const schema = z.object({
-  worlds: z.array(z.enum(['SERIES', 'MOVIES', 'FOOTBALL', 'GAMES', 'ANIME', 'CHARACTERS', 'BOOKS', 'DAILY_LIFE'])),
+  worlds: z.array(
+    z.enum(['SERIES', 'MOVIES', 'FOOTBALL', 'GAMES', 'ANIME', 'CARS', 'MUSIC', 'PEOPLE', 'CHARACTERS', 'BOOKS', 'DAILY_LIFE'])
+  ),
   connectionStyles: z.array(z.string()).default([]),
   shows: z.array(z.object({ title: z.string(), favoriteChars: z.array(z.string()).default([]), rememberedBits: z.array(z.string()).default([]) })).default([]),
-  movies: z.array(z.object({ title: z.string(), favoriteChars: z.array(z.string()).default([]) })).default([]),
+  movies: z.array(titleWithChars).default([]),
+  anime: z.array(titleWithChars).default([]),
+  games: z.array(titleWithChars).default([]),
+  cars: z.array(z.string()).default([]),
+  music: z.array(z.string()).default([]),
+  people: z.array(z.string()).default([]),
   teams: z.array(z.string()).default([]),
   nationalTeams: z.array(z.string()).default([]),
   players: z.array(z.string()).default([]),
   skip: z.boolean().default(false)
 });
 
+/** GET: current preferences, so the onboarding wizard can be revisited later to edit — not
+ *  just a one-time signup step. */
+export async function GET() {
+  try {
+    const user = await requireUser();
+
+    const [profile, worlds, shows, movies, anime, games, cars, music, people, teams, players] = await Promise.all([
+      db.profile.findUnique({ where: { userId: user.id } }),
+      db.favoriteWorld.findMany({ where: { userId: user.id } }),
+      db.favoriteShow.findMany({ where: { userId: user.id } }),
+      db.favoriteMovie.findMany({ where: { userId: user.id } }),
+      db.favoriteAnime.findMany({ where: { userId: user.id } }),
+      db.favoriteGame.findMany({ where: { userId: user.id } }),
+      db.favoriteCar.findMany({ where: { userId: user.id } }),
+      db.favoriteMusic.findMany({ where: { userId: user.id } }),
+      db.favoritePerson.findMany({ where: { userId: user.id } }),
+      db.favoriteTeam.findMany({ where: { userId: user.id } }),
+      db.favoritePlayer.findMany({ where: { userId: user.id } })
+    ]);
+
+    return NextResponse.json({
+      worlds: worlds.map((w) => w.category),
+      connectionStyles: profile?.connectionStyles ?? [],
+      shows: shows.map((s) => ({ title: s.title, favoriteChars: s.favoriteChars, rememberedBits: s.rememberedBits })),
+      movies: movies.map((m) => ({ title: m.title, favoriteChars: m.favoriteChars })),
+      anime: anime.map((a) => ({ title: a.title, favoriteChars: a.favoriteChars })),
+      games: games.map((g) => ({ title: g.title, favoriteChars: g.favoriteChars })),
+      cars: cars.map((c) => c.name),
+      music: music.map((m) => m.name),
+      people: people.map((p) => p.name),
+      teams: teams.filter((t) => t.kind === 'club').map((t) => t.name),
+      nationalTeams: teams.filter((t) => t.kind === 'national').map((t) => t.name),
+      players: players.map((p) => p.name)
+    });
+  } catch (error) {
+    if (error instanceof AuthError) return NextResponse.json({ error: 'يجب تسجيل الدخول.' }, { status: 401 });
+    return NextResponse.json({ error: 'فشل جلب التفضيلات.' }, { status: 500 });
+  }
+}
+
 /** Item 6: persists onboarding answers and marks the profile complete, or partially complete
- *  if the user skipped steps — every field here is optional by design (item 5). */
+ *  if the user skipped steps — every field here is optional by design (item 5). Also the
+ *  save path when a user revisits /onboarding later to edit their preferences. */
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
@@ -39,6 +89,35 @@ export async function POST(req: NextRequest) {
         await tx.favoriteMovie.createMany({
           data: body.movies.map((m) => ({ userId: user.id, title: m.title, favoriteChars: m.favoriteChars }))
         });
+      }
+
+      if (body.anime.length) {
+        await tx.favoriteAnime.deleteMany({ where: { userId: user.id } });
+        await tx.favoriteAnime.createMany({
+          data: body.anime.map((a) => ({ userId: user.id, title: a.title, favoriteChars: a.favoriteChars }))
+        });
+      }
+
+      if (body.games.length) {
+        await tx.favoriteGame.deleteMany({ where: { userId: user.id } });
+        await tx.favoriteGame.createMany({
+          data: body.games.map((g) => ({ userId: user.id, title: g.title, favoriteChars: g.favoriteChars }))
+        });
+      }
+
+      if (body.cars.length) {
+        await tx.favoriteCar.deleteMany({ where: { userId: user.id } });
+        await tx.favoriteCar.createMany({ data: body.cars.map((name) => ({ userId: user.id, name })) });
+      }
+
+      if (body.music.length) {
+        await tx.favoriteMusic.deleteMany({ where: { userId: user.id } });
+        await tx.favoriteMusic.createMany({ data: body.music.map((name) => ({ userId: user.id, name })) });
+      }
+
+      if (body.people.length) {
+        await tx.favoritePerson.deleteMany({ where: { userId: user.id } });
+        await tx.favoritePerson.createMany({ data: body.people.map((name) => ({ userId: user.id, name })) });
       }
 
       if (body.teams.length || body.nationalTeams.length) {
