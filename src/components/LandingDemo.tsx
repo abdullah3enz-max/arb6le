@@ -20,16 +20,14 @@ const DEMOS: ConnectionCardData[] = [
     claimType: 'FACT'
   },
   {
-    id: 'demo-rontgen',
-    conceptTitle: 'X-ray',
-    atomEmoji: '🩻',
-    atomLabel: 'الأشعة السينية',
-    worldEmoji: '⚽',
-    worldRef: 'Cristiano Ronaldo',
-    bridgeLine: 'Röntgen ≈ "Ron"',
-    whyOneLiner:
-      'الأشعة السينية اسمها العلمي الحقيقي "أشعة رونتجن" (Röntgen) نسبة لمكتشفها Wilhelm Röntgen — ' +
-      'و"رون" أول مقطع فيها يشبه صوتيًا بداية اسم Ronaldo. تشابه صوتي مبني على تسمية علمية حقيقية، مو تخمين.',
+    id: 'demo-zelda',
+    conceptTitle: 'Trio',
+    atomEmoji: '🔺',
+    atomLabel: '3 أجزاء',
+    worldEmoji: '🎮',
+    worldRef: 'The Legend of Zelda',
+    bridgeLine: 'Triforce = 3',
+    whyOneLiner: 'مثلث القوة "Triforce" الشهير بسلسلة زيلدا يتكوّن فعليًا من 3 أجزاء بالضبط: القوة، الحكمة، والشجاعة.',
     claimType: 'FACT'
   },
   {
