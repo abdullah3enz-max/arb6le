@@ -8,6 +8,13 @@ const config: Config = {
       fontFamily: {
         arabic: ['var(--font-arabic)', 'Tajawal', 'sans-serif']
       },
+      // Tajawal (the only font this app loads) has no 600 weight — Tailwind's default
+      // `font-semibold` maps to 600, which would silently fall back to the browser's nearest
+      // guess for every one of the 70+ uses across the app. Point it at 500, a weight the
+      // font actually ships, so every "semibold" element renders the real loaded font file.
+      fontWeight: {
+        semibold: '500'
+      },
       colors: {
         // Dark-first palette (awwwards/primesec-inspired): 50 = deepest bg, 900 = brightest text.
         // Values come from CSS custom properties (see globals.css :root) so the admin shell can

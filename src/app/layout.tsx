@@ -4,6 +4,11 @@ import './globals.css';
 
 const tajawal = Tajawal({
   subsets: ['arabic', 'latin'],
+  // Tajawal doesn't ship a 600 weight at all (only 200/300/400/500/700/800/900 exist) — so
+  // `font-semibold` (Tailwind's default weight-600 utility, used 70+ times across the app) was
+  // never able to load a matching file and always fell back to the browser's nearest-weight
+  // guess. Fixed properly in tailwind.config.ts by remapping `semibold` to 500, an actual loaded
+  // weight — this only loads weights that exist and are used, nothing wasted either way.
   weight: ['400', '500', '700', '800'],
   variable: '--font-arabic'
 });
