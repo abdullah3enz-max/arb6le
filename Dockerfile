@@ -4,6 +4,12 @@
 # keep this matching whatever you set there).
 
 FROM node:20-alpine AS base
+# Alpine ships musl libc, not glibc, and recent Alpine versions don't include OpenSSL 1.1 by
+# default — Prisma's query engine needs to detect it to pick the right binary, and without it
+# falls back to a guess ("Prisma failed to detect the libssl/openssl version... Defaulting to
+# openssl-1.1.x"), which can silently load the wrong engine. Installing it directly is Prisma's
+# own documented fix for Alpine images, cheaper than switching to a Debian-based base.
+RUN apk add --no-cache openssl
 
 # ---------- deps: install once, cached across builds unless package*.json changes ----------
 FROM base AS deps
