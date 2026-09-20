@@ -83,6 +83,11 @@ export async function findConnectionCandidates(
           'المشهورة نفسها) — ممنوع جملة فاضية زي "لأنه معروف بهذا" بدون ذكر الحقيقة الفعلية. ' +
           'إذا لم توجد association قوية ومباشرة، أرجع مصفوفة candidates فاضية — هذا أفضل من رابط ' +
           'ضعيف يحتاج تفكير. ' +
+          'قاعدة صارمة على worldRef: يجب أن يكون اسمًا مذكورًا حرفيًا بقائمة "عوالم المستخدم" ' +
+          'بالأسفل — لا تقترح اسمًا مشابهًا أو من نفس الفئة لكنه غير مكتوب فيها (مثلًا: المستخدم ' +
+          'ذاكر "Messi" فقط بكرة القدم، فممنوع تقترح "Ronaldo" أو أي لاعب ثاني حتى لو الرابط أقوى). ' +
+          'إذا ما وجدت association قوية داخل القائمة المذكورة فقط، أرجع مصفوفة فاضية، ولا تنزل ' +
+          'لاسم خارجها أبدًا. ' +
           liveSearchNote +
           (opts.excludeWorldRefs?.length
             ? ` لا تكرر هذه الزوايا المستخدمة سابقًا: ${opts.excludeWorldRefs.join(', ')}.`
@@ -111,10 +116,46 @@ export async function findConnectionCandidates(
   const candidates = parsed.candidates ?? [];
 
   // Enforce the LIVE_SEARCH gate in code, not just in the prompt: strip any candidate that
-  // cites LIVE_SEARCH while the provider is unconfigured.
+  // cites LIVE_SEARCH while the provider is unconfigured. Same treatment for worldRef — the
+  // prompt tells the model to stick to the user's saved interests, but models drift, so a
+  // candidate naming anything outside the actual saved list never reaches the user.
   return candidates
     .filter((c) => search.isLive || !c.sources.some((s) => s.sourceType === 'LIVE_SEARCH'))
+    .filter((c) => isKnownInterest(c.worldRef, profile))
     .map((c) => enrichWithMemoryProfile(c, profile));
+}
+
+function normalizeInterestName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[ً-ْـ]/g, '') // strip Arabic diacritics/tatweel
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/** Hard gate: worldRef must actually be one of the user's saved interests, not just something
+ * the model believes is plausible for that category. Matches loosely (either name contains the
+ * other, after normalization) since the model may return "Cristiano Ronaldo" for a saved "Ronaldo". */
+function isKnownInterest(worldRef: string, profile: UserMemoryProfile): boolean {
+  const target = normalizeInterestName(worldRef);
+  if (!target) return false;
+
+  const savedNames = [
+    ...profile.favoriteTeams,
+    ...profile.favoritePlayers,
+    ...profile.favoriteShows,
+    ...profile.favoriteMovies,
+    ...profile.favoriteAnime,
+    ...profile.favoriteGames,
+    ...profile.favoriteCars,
+    ...profile.favoriteMusic,
+    ...profile.favoritePeople
+  ];
+
+  return savedNames.some((name) => {
+    const n = normalizeInterestName(name);
+    return n.length > 0 && (target.includes(n) || n.includes(target));
+  });
 }
 
 /** Item 15 STEP 3 — nudges which ladder level / tone to prefer, never overrides accuracy. */
