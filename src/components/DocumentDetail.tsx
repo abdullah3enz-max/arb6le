@@ -113,14 +113,6 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     }
   }
 
-  async function saveFlashcard(conceptId: string, connectionId?: string) {
-    await fetch('/api/flashcards', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ conceptId, connectionId })
-    });
-  }
-
   if (!state) return <p className="text-sm text-ink-400">جاري التحميل...</p>;
 
   const { document, concepts, quizzes } = state;
@@ -200,14 +192,9 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
                 </div>
                 <p className="text-sm text-ink-700">{c.summary}</p>
                 <p className="mt-2 text-xs font-semibold text-amber-700">
-                  لم نجد رابطًا قويًا لهذه المعلومة، فما اخترعنا لك واحد — احفظها مباشرة أو جرّب Flashcards.
+                  لم نجد رابطًا قويًا لهذه المعلومة، فما اخترعنا لك واحد — بس صارت بطاقة تعليمية جاهزة
+                  في Study Mode عشان تحفظها مباشرة.
                 </p>
-                <button
-                  onClick={() => saveFlashcard(c.id)}
-                  className="mt-2 rounded-full border border-amber-200 bg-surface px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-                >
-                  💾 حوّلها Flashcard
-                </button>
               </div>
             ))}
           </div>

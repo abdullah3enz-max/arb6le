@@ -7,6 +7,7 @@ import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
 import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
 import { runQualityGate } from '@/lib/ai/qualityGate';
+import { buildFlashcardBack } from '@/lib/study/flashcardText';
 
 export type PipelineStage =
   | 'MAPPING_CONCEPTS'
@@ -117,7 +118,7 @@ export async function runPipeline(documentId: string) {
 }
 
 async function findAndSaveBestConnection(
-  concept: { id: string; title: string },
+  concept: { id: string; title: string; summary: string; atomLabel: string },
   extractedConcept: Parameters<typeof findConnectionCandidates>[0],
   profile: Parameters<typeof findConnectionCandidates>[1],
   userId: string,
@@ -153,7 +154,7 @@ async function findAndSaveBestConnection(
       continue; // try the next candidate instead of stopping at the first rejection
     }
 
-    await db.connection.create({
+    const connection = await db.connection.create({
       data: {
         conceptId: concept.id,
         associationLevel: candidate.associationLevel,
@@ -178,10 +179,32 @@ async function findAndSaveBestConnection(
         }
       }
     });
+    await createFlashcard(concept, userId, { id: connection.id, atomEmoji: connection.atomEmoji, bridgeLine: connection.bridgeLine });
     return; // one strong bridge per fact (item 14) — quality over quantity
   }
   // No candidate survived fact-check/critic/threshold: this concept explicitly gets no
-  // connection. The UI must render this as "ما لقيت ربط قوي وصادق..." (item 9), not silence.
+  // connection (the UI renders this as "ما لقيت ربط قوي وصادق..."), but it still becomes a
+  // flashcard — a student needs to memorize the fact itself even without a mnemonic bridge.
+  await createFlashcard(concept, userId, null);
+}
+
+/** Every concept becomes a flashcard automatically the moment its processing finishes — Study
+ * Mode's Flashcards tab must never require a manual "convert" step to have anything in it. */
+async function createFlashcard(
+  concept: { id: string; title: string; summary: string; atomLabel: string },
+  userId: string,
+  bridge: { id: string; atomEmoji: string; bridgeLine: string } | null
+) {
+  const flashcard = await db.flashcard.create({
+    data: {
+      userId,
+      conceptId: concept.id,
+      front: concept.title,
+      back: buildFlashcardBack({ summary: concept.summary, atomLabel: concept.atomLabel, bridge }),
+      connectionId: bridge?.id
+    }
+  });
+  await db.reviewItem.create({ data: { userId, flashcardId: flashcard.id, dueAt: new Date() } });
 }
 
 async function setStage(documentId: string, stage: PipelineStage) {

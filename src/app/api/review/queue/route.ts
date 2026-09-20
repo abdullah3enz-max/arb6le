@@ -15,7 +15,10 @@ export async function GET(req: NextRequest) {
 
     const items = await db.reviewItem.findMany({
       where: { userId: user.id, dueAt: { lte: new Date() }, ...kindFilter },
-      include: { concept: { include: { connections: { where: { status: 'APPROVED' }, take: 1 } } }, flashcard: true },
+      include: {
+        concept: { include: { connections: { where: { status: 'APPROVED' }, take: 1 } } },
+        flashcard: { include: { concept: { select: { document: { select: { fileName: true } } } } } }
+      },
       orderBy: { dueAt: 'asc' },
       take: 30
     });

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 
 interface ReviewItem {
   id: string;
-  flashcard: { front: string; back: string } | null;
+  flashcard: { front: string; back: string; concept: { document: { fileName: string } } } | null;
 }
 
 /** Study Mode's "بطاقات تعليمية" tab — one flashcard at a time: try to recall → flip → rate.
@@ -41,7 +41,7 @@ export function StudyFocus() {
         <p className="mb-3 text-2xl">✅</p>
         <p className="font-bold text-ink-900">ما عندك بطاقات مستحقة مراجعة الحين.</p>
         <p className="mt-1 text-sm text-ink-500">
-          حوّل أي معلومة إلى Flashcard من صفحة أي ملف، وبترجع لك هنا أول ما يحين وقت مراجعتها.
+          كل معلومة ترفعها تتحول بطاقة تلقائيًا — وبترجع لك هنا أول ما يحين وقت مراجعتها.
         </p>
       </div>
     );
@@ -51,9 +51,12 @@ export function StudyFocus() {
 
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold text-ink-400">
-        {index + 1} / {items.length}
-      </p>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold text-ink-400">
+          {index + 1} / {items.length}
+        </p>
+        <p className="truncate text-xs font-semibold text-ink-400">📄 {current.concept.document.fileName}</p>
+      </div>
       <div
         onClick={() => !flipped && setFlipped(true)}
         className={
