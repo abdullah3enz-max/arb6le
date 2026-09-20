@@ -36,11 +36,7 @@ export function NavBar({ userName, isAdmin }: { userName: string; isAdmin: boole
   ];
 
   return (
-    <nav
-      className={`glass relative border border-ink-100 px-4 py-3 transition-[border-radius] sm:px-5 ${
-        mobileOpen ? 'rounded-3xl' : 'rounded-full'
-      }`}
-    >
+    <nav className="glass relative rounded-3xl border border-ink-100 px-4 py-3 sm:px-5">
       <div className="flex items-center justify-between gap-2">
         <Link href="/dashboard" className="shrink-0 whitespace-nowrap text-base font-extrabold text-ink-900 sm:text-lg">
           اربط لي يا حب <span className="text-accent-500">❤️</span>
@@ -94,7 +90,7 @@ export function NavBar({ userName, isAdmin }: { userName: string; isAdmin: boole
       </div>
 
       {mobileOpen && (
-        <div className="mt-3 space-y-1 border-t border-ink-100 pt-3 md:hidden">
+        <div className="animate-fade-up mt-3 space-y-1 border-t border-ink-100 pt-3 md:hidden">
           {links.map((l) => (
             <Link
               key={l.href}
