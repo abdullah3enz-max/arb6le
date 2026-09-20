@@ -3,12 +3,18 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { requireUser, AuthError } from '@/lib/auth';
 
-/** Item 22/23: due-now items for Study Mode's spaced-repetition queue. */
-export async function GET() {
+/** Item 22/23: due-now items for Study Mode's spaced-repetition queue. `kind` narrows to just
+ * flashcard-backed or concept-backed review items — Study Mode's Flashcards tab only ever wants
+ * the former, so it never leaks a random concept-only item into the flip-card flow. */
+export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
+    const kind = req.nextUrl.searchParams.get('kind');
+    const kindFilter =
+      kind === 'flashcard' ? { flashcardId: { not: null } } : kind === 'concept' ? { conceptId: { not: null } } : {};
+
     const items = await db.reviewItem.findMany({
-      where: { userId: user.id, dueAt: { lte: new Date() } },
+      where: { userId: user.id, dueAt: { lte: new Date() }, ...kindFilter },
       include: { concept: { include: { connections: { where: { status: 'APPROVED' }, take: 1 } } }, flashcard: true },
       orderBy: { dueAt: 'asc' },
       take: 30

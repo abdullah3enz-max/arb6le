@@ -48,6 +48,10 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    // Every flashcard must enter the spaced-repetition queue immediately — otherwise it never
+    // surfaces in Study Mode (ReviewItem is what /api/review/queue actually reads from).
+    await db.reviewItem.create({ data: { userId: user.id, flashcardId: flashcard.id, dueAt: new Date() } });
+
     return NextResponse.json({ flashcard });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: 'يجب تسجيل الدخول.' }, { status: 401 });

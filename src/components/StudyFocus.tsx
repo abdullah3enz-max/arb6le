@@ -1,26 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 interface ReviewItem {
   id: string;
-  concept: {
-    title: string;
-    summary: string;
-    connections: { atomEmoji: string; bridgeLine: string; worldRef: string }[];
-  } | null;
   flashcard: { front: string; back: string } | null;
 }
 
-/** Item 23: Study Mode — no distractions, one item at a time: info → try to recall → reveal → rate. */
+/** Study Mode's "بطاقات تعليمية" tab — one flashcard at a time: try to recall → flip → rate.
+ * Only ever fed flashcard-backed review items (?kind=flashcard), never a bare concept. */
 export function StudyFocus() {
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [index, setIndex] = useState(0);
-  const [revealed, setRevealed] = useState(false);
+  const [flipped, setFlipped] = useState(false);
 
   useEffect(() => {
-    fetch('/api/review/queue')
+    fetch('/api/review/queue?kind=flashcard')
       .then((r) => r.json())
       .then((d) => setItems(d.items ?? []));
   }, []);
@@ -34,7 +29,7 @@ export function StudyFocus() {
         body: JSON.stringify({ reviewItemId: current.id, result })
       });
     }
-    setRevealed(false);
+    setFlipped(false);
     setIndex((i) => i + 1);
   }
 
@@ -42,64 +37,59 @@ export function StudyFocus() {
 
   if (items.length === 0 || index >= items.length) {
     return (
-      <div className="text-center">
+      <div className="rounded-xl2 border border-ink-100 bg-surface p-8 text-center shadow-card">
         <p className="mb-3 text-2xl">✅</p>
-        <p className="mb-6 font-bold text-ink-900">ما عليك مراجعات الحين — رجعنا لك أي شي مستحق مراجعة تلقائيًا.</p>
-        <Link href="/dashboard" className="text-sm font-semibold text-accent-600">
-          رجوع للرئيسية
-        </Link>
+        <p className="font-bold text-ink-900">ما عندك بطاقات مستحقة مراجعة الحين.</p>
+        <p className="mt-1 text-sm text-ink-500">
+          حوّل أي معلومة إلى Flashcard من صفحة أي ملف، وبترجع لك هنا أول ما يحين وقت مراجعتها.
+        </p>
       </div>
     );
   }
 
-  const current = items[index]!; // safe: guarded by the `index >= items.length` check above
-  const title = current.concept?.title ?? current.flashcard?.front ?? '';
-  const connection = current.concept?.connections?.[0];
+  const current = items[index]!.flashcard!; // safe: kind=flashcard guarantees this is set
 
   return (
-    <div className="rounded-xl2 border border-ink-100 bg-surface p-8 shadow-card">
-      <p className="mb-1 text-xs font-semibold text-ink-400">
+    <div>
+      <p className="mb-2 text-xs font-semibold text-ink-400">
         {index + 1} / {items.length}
       </p>
-      <h1 className="mb-6 text-xl font-extrabold text-ink-900">{title}</h1>
+      <div
+        onClick={() => !flipped && setFlipped(true)}
+        className={
+          'flex min-h-[220px] cursor-pointer flex-col items-center justify-center rounded-xl2 border p-8 text-center shadow-card transition ' +
+          (flipped ? 'border-accent-200 bg-accent-50/60' : 'border-ink-100 bg-surface hover:border-accent-200')
+        }
+      >
+        {!flipped ? (
+          <>
+            <p className="text-lg font-extrabold text-ink-900">{current.front}</p>
+            <p className="mt-4 text-xs font-semibold text-ink-400">اضغط على البطاقة لتشوف الإجابة</p>
+          </>
+        ) : (
+          <p className="whitespace-pre-line text-base font-bold text-ink-900">{current.back}</p>
+        )}
+      </div>
 
-      {!revealed ? (
-        <>
-          <p className="mb-6 text-sm text-ink-500">وش الجسر؟ حاول تتذكره قبل ما نعرضه لك.</p>
-          <button onClick={() => setRevealed(true)} className="w-full rounded-xl bg-accent-500 py-3 text-sm font-bold text-white hover:bg-accent-600">
-            أظهر الجسر
-          </button>
-        </>
-      ) : (
-        <>
-          <div className="mb-6 rounded-xl bg-accent-50/60 p-4 text-center text-lg font-extrabold text-ink-900">
-            {connection ? (
-              <span>
-                {connection.atomEmoji} {connection.bridgeLine}
-              </span>
-            ) : (
-              <p>{current.concept?.summary ?? current.flashcard?.back}</p>
-            )}
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            {(
-              [
-                ['AGAIN', 'نسيتها'],
-                ['HARD', 'صعبة'],
-                ['GOOD', 'جيدة'],
-                ['EASY', 'سهلة']
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => rate(key)}
-                className="rounded-xl border border-ink-100 py-2 text-xs font-bold text-ink-700 hover:bg-ink-100"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </>
+      {flipped && (
+        <div className="mt-4 grid grid-cols-4 gap-2">
+          {(
+            [
+              ['AGAIN', 'نسيتها'],
+              ['HARD', 'صعبة'],
+              ['GOOD', 'جيدة'],
+              ['EASY', 'سهلة']
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => rate(key)}
+              className="rounded-xl border border-ink-100 py-2 text-xs font-bold text-ink-700 hover:bg-ink-100"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
