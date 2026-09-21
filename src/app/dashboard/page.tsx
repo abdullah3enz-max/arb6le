@@ -5,6 +5,7 @@ import { DocumentList } from '@/components/DocumentList';
 import { GamificationBar } from '@/components/GamificationBar';
 import { InterestsBar } from '@/components/InterestsBar';
 import { NavBar } from '@/components/NavBar';
+import { SupportWidget } from '@/components/SupportWidget';
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
@@ -24,6 +25,10 @@ export default async function DashboardPage() {
 
       <div className="mt-5">
         <InterestsBar />
+      </div>
+
+      <div className="mt-5">
+        <SupportWidget />
       </div>
 
       <div className="mt-6">

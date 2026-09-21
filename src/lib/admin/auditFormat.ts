@@ -1,4 +1,5 @@
 import { PERMISSIONS } from '@/lib/rbac/permissions';
+import { TICKET_STATUS_LABEL } from '@/lib/admin/ticketLabels';
 
 const PERMISSION_LABEL = new Map<string, string>(PERMISSIONS.map((p) => [p.key, p.descriptionAr]));
 
@@ -69,6 +70,14 @@ export function describeAuditLog(log: AuditLogLike, resolveTarget: TargetLookup)
       return `أضاف ملاحظة على ${meta.name}`;
     case 'admin.lead_deleted':
       return `حذف العميل المحتمل ${meta.name}`;
+    case 'admin.ticket_replied':
+      return `رد على تذكرة "${meta.subject}" لـ ${targetName(meta.target)}`;
+    case 'admin.ticket_status_changed':
+      return `غيّر حالة تذكرة "${meta.subject}" من "${TICKET_STATUS_LABEL[meta.from as string] ?? meta.from}" إلى "${TICKET_STATUS_LABEL[meta.to as string] ?? meta.to}"`;
+    case 'admin.ticket_assigned':
+      return meta.assignedToId
+        ? `عيّن تذكرة "${meta.subject}" لـ ${targetName(meta.assignedToId)}`
+        : `ألغى تعيين تذكرة "${meta.subject}"`;
     case 'user.registered':
       return 'أنشأ حسابًا جديدًا';
     case 'document.uploaded':
@@ -81,5 +90,5 @@ export function describeAuditLog(log: AuditLogLike, resolveTarget: TargetLookup)
 /** Every metaJson shape above that references another account uses either `target` or `userId`. */
 export function extractTargetUserIds(metaJson: unknown): string[] {
   const meta = (metaJson ?? {}) as Record<string, unknown>;
-  return [meta.target, meta.userId].filter((v): v is string => typeof v === 'string');
+  return [meta.target, meta.userId, meta.assignedToId].filter((v): v is string => typeof v === 'string');
 }

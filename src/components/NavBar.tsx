@@ -32,6 +32,7 @@ export function NavBar({ userName, isAdmin }: { userName: string; isAdmin: boole
     { href: '/onboarding', label: 'تفضيلاتي' },
     { href: '/study', label: 'Study Mode' },
     { href: '/plans', label: 'الخطط' },
+    { href: '/support', label: 'الدعم' },
     ...(isAdmin ? [{ href: '/admin', label: 'الإدارة' }] : [])
   ];
 

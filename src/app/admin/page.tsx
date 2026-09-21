@@ -17,6 +17,7 @@ interface Overview {
   planBreakdown: { planId: string; code: string; nameAr: string; count: number; mrrCents: number }[];
   mrrCents: number;
   signupTrend: { date: string; count: number }[];
+  openTicketsCount?: number; // omitted entirely for staff without tickets.view — never 0-as-hidden
   recentActivity: {
     id: string;
     action: string;
@@ -84,6 +85,19 @@ export default function AdminOverviewPage() {
           <Stat label="تكلفة AI (دولار)" value={(data.aiCostCentsTotal / 100).toFixed(2)} />
         </div>
       </section>
+
+      {data.openTicketsCount !== undefined && (
+        <section>
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">الدعم</h3>
+          <Link href="/admin/customers/support" className="block w-fit">
+            <Stat
+              label="تذاكر دعم مفتوحة"
+              value={fmtNumber(data.openTicketsCount)}
+              tone={data.openTicketsCount > 0 ? 'warn' : undefined}
+            />
+          </Link>
+        </section>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">

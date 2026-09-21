@@ -28,7 +28,7 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       { href: '/admin/customers/users', label: 'المستخدمون', icon: '👥', permission: 'users.view', ready: true },
       { href: '/admin/customers/crm', label: 'CRM', icon: '🧭', permission: 'crm.view', ready: true },
       { href: '/admin/customers/leads', label: 'العملاء المحتملون', icon: '🎯', permission: 'crm.view', ready: true },
-      { href: '/admin/customers/support', label: 'الدعم', icon: '🎫', permission: 'tickets.view' }
+      { href: '/admin/customers/support', label: 'الدعم', icon: '🎫', permission: 'tickets.view', ready: true }
     ]
   },
   {

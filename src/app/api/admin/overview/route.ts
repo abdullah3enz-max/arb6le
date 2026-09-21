@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { AuthError } from '@/lib/auth';
-import { requireStaff } from '@/lib/rbac';
+import { requireStaff, hasPermission } from '@/lib/rbac';
 import { describeAuditLog, extractTargetUserIds } from '@/lib/admin/auditFormat';
 
 /** Item 28: Admin Dashboard KPIs — Users, Revenue proxy, Usage, AI usage, Errors, Feedback. */
 export async function GET() {
   try {
-    await requireStaff();
+    const actor = await requireStaff();
+    // Every other widget here is aggregate/non-sensitive, shown to any staff role. Ticket counts
+    // are the one exception — support content is gated by tickets.view, so a role without it
+    // (SALES, FINANCE, ANALYST) gets this omitted rather than leaking "N open tickets" to a
+    // dashboard they're allowed to see for unrelated reasons.
+    const canSeeTickets = await hasPermission(actor, 'tickets.view');
 
     const now = new Date();
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -79,6 +84,8 @@ export async function GET() {
     const targetUsers = await db.user.findMany({ where: { id: { in: targetIds } }, select: { id: true, email: true, name: true } });
     const targetMap = new Map(targetUsers.map((u) => [u.id, u.name ?? u.email]));
 
+    const openTicketsCount = canSeeTickets ? await db.supportTicket.count({ where: { status: 'OPEN' } }) : undefined;
+
     return NextResponse.json({
       userCount,
       newUsersThisWeek,
@@ -92,6 +99,7 @@ export async function GET() {
       planBreakdown,
       mrrCents,
       signupTrend,
+      openTicketsCount,
       recentActivity: recentActivity.map((l) => ({ ...l, summary: describeAuditLog(l, (id) => targetMap.get(id)) }))
     });
   } catch (error) {
