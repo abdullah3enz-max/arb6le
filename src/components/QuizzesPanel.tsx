@@ -15,13 +15,16 @@ interface QuizRow {
  * back into the existing QuizRunner at /quiz/[id] and the last score when one exists. */
 export function QuizzesPanel() {
   const [quizzes, setQuizzes] = useState<QuizRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/quiz')
       .then((r) => r.json())
-      .then((d) => setQuizzes(d.quizzes ?? []));
+      .then((d) => (d.error ? setError(d.error) : setQuizzes(d.quizzes ?? [])))
+      .catch(() => setError('فشل تحميل الاختبارات.'));
   }, []);
 
+  if (error) return <p className="text-center text-sm font-semibold text-accent-600">{error}</p>;
   if (!quizzes) return <p className="text-center text-sm text-ink-400">جاري التحميل...</p>;
 
   if (quizzes.length === 0) {
