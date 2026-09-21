@@ -48,7 +48,7 @@ interface ConceptRow {
 interface DocState {
   document: { id: string; fileName: string; status: string; errorMessage: string | null };
   concepts: ConceptRow[];
-  quizzes: { id: string; title: string }[];
+  quizzes: { id: string; title: string; questions: { id: string }[] }[];
 }
 
 function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionCardData {
@@ -68,6 +68,8 @@ function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionC
 export function DocumentDetail({ documentId }: { documentId: string }) {
   const [state, setState] = useState<DocState | null>(null);
   const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
+  const [regeneratingQuiz, setRegeneratingQuiz] = useState(false);
+  const [quizError, setQuizError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/documents/${documentId}`);
@@ -113,6 +115,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     }
   }
 
+  async function regenerateQuiz() {
+    setRegeneratingQuiz(true);
+    setQuizError(null);
+    try {
+      const res = await fetch(`/api/documents/${documentId}/regenerate-quiz`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'فشلت إعادة توليد الاختبار.');
+      await load();
+    } catch (err) {
+      setQuizError(err instanceof Error ? err.message : 'خطأ غير متوقع.');
+    } finally {
+      setRegeneratingQuiz(false);
+    }
+  }
+
   if (!state) return <p className="text-sm text-ink-400">جاري التحميل...</p>;
 
   const { document, concepts, quizzes } = state;
@@ -153,10 +170,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
         <p className="mt-1 text-ink-500">
           وجدنا {concepts.length} معلومة مهمة، وسوّينا {withConnection.length} رابط ذاكرة شخصي لك.
         </p>
-        {quizzes[0] && (
+        {quizzes[0] && quizzes[0].questions.length > 0 ? (
           <Link href={`/quiz/${quizzes[0].id}`} className="mt-3 inline-block rounded-full bg-accent-500 px-5 py-2 text-sm font-bold text-white">
             جاهز نختبرك؟ 🎯
           </Link>
+        ) : (
+          <div className="mt-3">
+            <button
+              onClick={regenerateQuiz}
+              disabled={regeneratingQuiz}
+              className="rounded-full border border-ink-100 px-5 py-2 text-sm font-bold text-ink-700 transition hover:bg-ink-100 disabled:opacity-50"
+            >
+              {regeneratingQuiz ? '...جاري توليد الاختبار' : '🔧 ولّد اختبار لهذا الملف'}
+            </button>
+            {quizError && <p className="mt-2 text-xs font-semibold text-accent-600">{quizError}</p>}
+          </div>
         )}
       </div>
 

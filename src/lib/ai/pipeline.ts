@@ -8,6 +8,7 @@ import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
 import { runQualityGate } from '@/lib/ai/qualityGate';
 import { buildFlashcardBack } from '@/lib/study/flashcardText';
+import type { ExtractedConcept } from '@/lib/ai/types';
 
 export type PipelineStage =
   | 'MAPPING_CONCEPTS'
@@ -76,36 +77,7 @@ export async function runPipeline(documentId: string) {
     // and already committed. A quiz-step failure (a model returning an unexpected shape, a
     // transient provider error) must not discard minutes of real, already-approved work — it
     // just means this document ends up with no quiz yet, which the UI already handles.
-    try {
-      const quizQuestions = await generateQuiz(extracted, { userId: document.userId, cacheKeyPrefix });
-      if (quizQuestions.length > 0) {
-        const quiz = await db.quiz.create({
-          data: { userId: document.userId, documentId, title: `اختبار: ${document.fileName}` }
-        });
-        await db.quizQuestion.createMany({
-          data: quizQuestions
-            .map((q) => {
-              const concept = savedConcepts.find((c) => c.title === q.conceptTitle);
-              if (!concept) return null;
-              return {
-                quizId: quiz.id,
-                conceptId: concept.id,
-                kind: q.kind,
-                prompt: q.prompt,
-                choicesJson: (q.choices ?? null) as object | undefined,
-                // Defensive: some models return TRUE_FALSE answers as a JSON boolean despite the
-                // prompt asking for a string — coerce rather than let a type-mismatch this far
-                // into a multi-minute run discard everything already generated.
-                correctAnswer: String(q.correctAnswer),
-                explanation: q.explanation
-              };
-            })
-            .filter((x): x is NonNullable<typeof x> => x !== null)
-        });
-      }
-    } catch (quizError) {
-      console.error('Quiz generation failed (non-fatal):', documentId, quizError);
-    }
+    await generateAndAttachQuiz(document, extracted, savedConcepts, cacheKeyPrefix);
 
     await setStage(documentId, 'READY');
   } catch (error) {
@@ -114,6 +86,101 @@ export async function runPipeline(documentId: string) {
       data: { status: 'FAILED', errorMessage: error instanceof Error ? error.message : 'Unknown pipeline error' }
     });
     throw error;
+  }
+}
+
+/**
+ * Generates quiz questions for a document's already-extracted concepts and attaches them —
+ * shared by runPipeline (first processing) and regenerateQuiz (repairing a document that ended
+ * up with no quiz). Best-effort and non-throwing: a quiz-step failure must never take down
+ * the caller's already-committed concepts/connections/flashcards.
+ */
+async function generateAndAttachQuiz(
+  document: { id: string; userId: string; fileName: string },
+  extracted: ExtractedConcept[],
+  savedConcepts: { id: string; title: string }[],
+  cacheKeyPrefix: string
+): Promise<boolean> {
+  try {
+    const quizQuestions = await generateQuiz(extracted, { userId: document.userId, cacheKeyPrefix });
+    // The model echoes back conceptTitle rather than an id, and routinely doesn't reproduce it
+    // byte-for-byte (extra whitespace, different quotes, minor rewording) — an exact-string
+    // match here silently dropped every question in a quiz whenever that happened, producing
+    // a Quiz row with a title but zero questions (indistinguishable from a real bug to a
+    // student). Match on a normalized title instead; this only affects which existing concept
+    // a real, already-generated question attaches to, never invents content.
+    const conceptByNormalizedTitle = new Map(savedConcepts.map((c) => [normalizeConceptTitle(c.title), c]));
+    const matchedQuestions = quizQuestions
+      .map((q) => {
+        const concept = conceptByNormalizedTitle.get(normalizeConceptTitle(q.conceptTitle));
+        if (!concept) {
+          console.warn('Quiz question dropped — no matching concept for title:', document.id, q.conceptTitle);
+          return null;
+        }
+        return {
+          conceptId: concept.id,
+          kind: q.kind,
+          prompt: q.prompt,
+          choicesJson: (q.choices ?? null) as object | undefined,
+          // Defensive: some models return TRUE_FALSE answers as a JSON boolean despite the
+          // prompt asking for a string — coerce rather than let a type-mismatch this far
+          // into a multi-minute run discard everything already generated.
+          correctAnswer: String(q.correctAnswer),
+          explanation: q.explanation
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    // Only create the Quiz once at least one question actually attached to a real concept —
+    // a Quiz with zero questions reads as broken, not as "nothing generated yet".
+    if (matchedQuestions.length === 0) return false;
+
+    const quiz = await db.quiz.create({
+      data: { userId: document.userId, documentId: document.id, title: `اختبار: ${document.fileName}` }
+    });
+    await db.quizQuestion.createMany({
+      data: matchedQuestions.map((q) => ({ ...q, quizId: quiz.id }))
+    });
+    return true;
+  } catch (quizError) {
+    console.error('Quiz generation failed (non-fatal):', document.id, quizError);
+    return false;
+  }
+}
+
+/**
+ * Repairs a document that finished processing (concepts/flashcards intact) but ended up with
+ * no quiz — most commonly one processed before generateAndAttachQuiz's normalized-title match,
+ * where every question silently failed to attach. Re-runs only the quiz step, from the concepts
+ * already saved in the database, rather than the whole pipeline.
+ */
+export async function regenerateQuiz(documentId: string): Promise<void> {
+  const document = await db.document.findUniqueOrThrow({ where: { id: documentId } });
+  if (document.status !== 'READY') {
+    throw new Error('الملف لازم يكون بحالة "جاهز" قبل إعادة توليد الاختبار.');
+  }
+
+  const concepts = await db.concept.findMany({ where: { documentId }, orderBy: { orderIndex: 'asc' } });
+  if (concepts.length === 0) {
+    throw new Error('ما فيه مفاهيم مستخرجة لهذا الملف.');
+  }
+
+  const extracted: ExtractedConcept[] = concepts.map((c) => ({
+    title: c.title,
+    summary: c.summary,
+    importance: c.importance,
+    conceptType: c.conceptType,
+    sourcePageNumbers: c.sourcePageIds.map(Number),
+    atomLabel: c.atomLabel,
+    atomEmoji: c.atomEmoji
+  }));
+
+  await db.quiz.deleteMany({ where: { documentId } });
+  // A regen-scoped cache key, unlike runPipeline's plain contentHash, so this always calls the
+  // model again instead of ever replaying a cached response from the run being repaired.
+  const created = await generateAndAttachQuiz(document, extracted, concepts, `${document.contentHash}:regen:${Date.now()}`);
+  if (!created) {
+    throw new Error('ما قدرنا نولّد أسئلة اختبار من محتوى هذا الملف حاليًا — جرب مرة ثانية بعد شوي.');
   }
 }
 
@@ -209,4 +276,15 @@ async function createFlashcard(
 
 async function setStage(documentId: string, stage: PipelineStage) {
   await db.document.update({ where: { id: documentId }, data: { status: stage } });
+}
+
+/** Collapses whitespace/case/punctuation differences so a model's echoed conceptTitle matches
+ * the concept it actually meant, without requiring byte-identical strings (see call site).
+ * Exported only for pipeline.test.ts. */
+export function normalizeConceptTitle(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[.,:;!?"'«»“”‘’،؛؟]/g, '');
 }
