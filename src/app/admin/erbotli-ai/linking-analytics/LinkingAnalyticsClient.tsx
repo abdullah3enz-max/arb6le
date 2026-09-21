@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { WORLD_LABEL } from '@/lib/admin/worldLabels';
 
 interface FeedbackRow {
   id: string;
@@ -35,20 +36,6 @@ const LEVEL_LABEL: Record<string, string> = {
   VISUAL: 'تشابه بصري',
   FAMOUS_ASSOCIATION: 'شخصية مشهورة',
   CONTEXTUAL: 'سياقي'
-};
-
-const WORLD_LABEL: Record<string, string> = {
-  SERIES: '📺 مسلسلات',
-  MOVIES: '🎬 أفلام',
-  FOOTBALL: '⚽ كورة',
-  GAMES: '🎮 ألعاب',
-  ANIME: '🇯🇵 أنمي',
-  CARS: '🚗 سيارات',
-  MUSIC: '🎵 موسيقى',
-  PEOPLE: '👤 مشاهير',
-  CHARACTERS: '🦸 شخصيات',
-  BOOKS: '📚 كتب',
-  DAILY_LIFE: '☀️ حياة يومية'
 };
 
 const STATUS_LABEL: Record<string, string> = {

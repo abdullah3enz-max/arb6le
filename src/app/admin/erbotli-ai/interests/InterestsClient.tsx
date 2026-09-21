@@ -1,25 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { WORLD_LABEL } from '@/lib/admin/worldLabels';
 
 interface InterestsData {
   selectionCounts: { category: string; count: number; avgDocuments: number; avgQuizScore: number | null }[];
   performance: { category: string; total: number; acceptanceRate: number | null; positive: number; negative: number }[];
 }
-
-const WORLD_LABEL: Record<string, string> = {
-  SERIES: '📺 مسلسلات',
-  MOVIES: '🎬 أفلام',
-  FOOTBALL: '⚽ كورة',
-  GAMES: '🎮 ألعاب',
-  ANIME: '🇯🇵 أنمي',
-  CARS: '🚗 سيارات',
-  MUSIC: '🎵 موسيقى',
-  PEOPLE: '👤 مشاهير',
-  CHARACTERS: '🦸 شخصيات',
-  BOOKS: '📚 كتب',
-  DAILY_LIFE: '☀️ حياة يومية'
-};
 
 function pct(v: number | null) {
   return v === null ? '—' : `${(v * 100).toFixed(0)}%`;
