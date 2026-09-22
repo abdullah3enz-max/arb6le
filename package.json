@@ -1,7 +1,7 @@
 {
   "name": "erbotli",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "اربط لي يا حب ❤️ (ERBOTLI) — Personalized Memory Connection Platform",
   "scripts": {
     "predev": "node scripts/copy-pdf-worker.js",
