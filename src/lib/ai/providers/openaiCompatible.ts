@@ -15,12 +15,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   private baseUrl: string;
   private apiKey: string;
   private model: string;
+  private extraBody?: Record<string, unknown>;
 
-  constructor(params: { baseUrl: string; apiKey: string; model: string; name?: string }) {
+  constructor(params: { baseUrl: string; apiKey: string; model: string; name?: string; extraBody?: Record<string, unknown> }) {
     this.baseUrl = params.baseUrl.replace(/\/+$/, '');
     this.apiKey = params.apiKey;
     this.model = params.model;
     this.name = params.name ?? 'openai-compatible';
+    this.extraBody = params.extraBody;
   }
 
   async complete(options: LlmCallOptions): Promise<LlmCallResult> {
@@ -34,12 +36,18 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         model: this.model,
         messages: options.messages.map((m) => ({ role: m.role, content: m.content })),
         temperature: options.temperature ?? 0.3,
-        max_tokens: options.maxTokens ?? 2048
+        max_tokens: options.maxTokens ?? 2048,
         // Deliberately NOT sending response_format:{type:"json_object"} — on some free models
         // routed through OpenRouter, strict JSON-mode enforcement appears to zero out `content`
         // entirely when the model's raw output doesn't cleanly conform (rather than passing it
         // through), which is worse than the noisy-but-present text our own parseJsonResponse
         // extraction (router.ts) is built to handle. The system prompts already ask for JSON.
+        //
+        // Merged in verbatim from OPENAI_COMPATIBLE_EXTRA_BODY (see router.ts) — this is how a
+        // reasoning-capable model (e.g. openai/gpt-oss-120b via OpenRouter) gets throttled down
+        // with something like {"reasoning":{"effort":"low"}}, without this generic adapter
+        // needing to know about any one provider's or model's specific extra parameters.
+        ...this.extraBody
       })
     });
 

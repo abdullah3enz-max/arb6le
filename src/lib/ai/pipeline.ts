@@ -62,15 +62,21 @@ export async function runPipeline(documentId: string) {
     const profile = await retrieveUserMemoryProfile(document.userId);
 
     await setStage(documentId, 'FACT_CHECKING');
-    for (const concept of savedConcepts) {
-      await findAndSaveBestConnection(
+    // Each concept's connection search is fully independent (its own LLM calls, its own
+    // Connection/Flashcard rows, no shared cache key — see connectionFinder/connectionCritic,
+    // which never pass a cacheKey at all) — so this no longer processes them one at a time.
+    // Concurrency is capped, not unlimited: a real provider still has a requests-per-minute
+    // ceiling, and firing 20+ concepts at once would just trade "slow" for "rate-limited".
+    const concurrency = Math.max(1, Number(process.env.PIPELINE_CONCEPT_CONCURRENCY ?? '4'));
+    await mapWithConcurrency(savedConcepts, concurrency, (concept) =>
+      findAndSaveBestConnection(
         concept,
         extracted.find((c) => c.title === concept.title)!,
         profile,
         document.userId,
         cacheKeyPrefix
-      );
-    }
+      )
+    );
 
     await setStage(documentId, 'GENERATING');
     // Quiz generation is best-effort: the concepts and connections above are the core value
@@ -276,6 +282,28 @@ async function createFlashcard(
 
 async function setStage(documentId: string, stage: PipelineStage) {
   await db.document.update({ where: { id: documentId }, data: { status: stage } });
+}
+
+/**
+ * Runs `fn` over `items` with at most `limit` in flight at once — a fixed-size worker pool
+ * pulling from a shared cursor, rather than chunking into sequential batches of `limit` (which
+ * would leave a worker idle for the rest of a batch just because one other item in it happened
+ * to take longer). No new dependency: this is the entire feature p-limit/p-map provide here.
+ * Exported only for pipeline.test.ts.
+ */
+export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await fn(items[current]!);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** Collapses whitespace/case/punctuation differences so a model's echoed conceptTitle matches

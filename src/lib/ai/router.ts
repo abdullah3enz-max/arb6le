@@ -68,10 +68,34 @@ function buildProvider(tier: ModelTier): LlmProvider {
         'Set OPENAI_COMPATIBLE_MODEL (or _FAST/_STRONG) to the exact model name your provider expects.'
       );
     }
-    return new OpenAiCompatibleProvider({ baseUrl, apiKey, model: config.model, name: process.env.OPENAI_COMPATIBLE_NAME });
+    return new OpenAiCompatibleProvider({
+      baseUrl,
+      apiKey,
+      model: config.model,
+      name: process.env.OPENAI_COMPATIBLE_NAME,
+      extraBody: parseExtraBody(process.env.OPENAI_COMPATIBLE_EXTRA_BODY)
+    });
   }
 
   return new MockProvider();
+}
+
+/**
+ * OPENAI_COMPATIBLE_EXTRA_BODY: an optional raw JSON object string merged into every request to
+ * an OpenAI-compatible endpoint — e.g. {"reasoning":{"effort":"low"}} to throttle down a
+ * reasoning-capable model like openai/gpt-oss-120b via OpenRouter, which otherwise spends real
+ * time (and, on a paid plan, real money) on hidden chain-of-thought before ever writing the
+ * answer. A malformed value is a warning, not a crash — every LLM call must not go down because
+ * of one bad env var.
+ */
+function parseExtraBody(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    console.warn('OPENAI_COMPATIBLE_EXTRA_BODY is not valid JSON — ignoring it:', raw);
+    return undefined;
+  }
 }
 
 /**
