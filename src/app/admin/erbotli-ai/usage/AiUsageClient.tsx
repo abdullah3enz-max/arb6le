@@ -2,7 +2,28 @@
 
 import { useEffect, useState } from 'react';
 
+interface ModelStats {
+  model: string;
+  count: number;
+  costCents: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgInputTokens: number;
+  avgOutputTokens: number;
+  avgLatencyMs: number;
+  failedCount: number;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+  isCurrentFast: boolean;
+  isCurrentStrong: boolean;
+}
+
 interface AiUsageData {
+  currentModels: {
+    provider: string;
+    fast: { model: string; stats: ModelStats | null };
+    strong: { model: string; stats: ModelStats | null };
+  };
   totalRequests: number;
   requestsToday: number;
   requestsThisMonth: number;
@@ -15,7 +36,7 @@ interface AiUsageData {
   cacheHitRate: number;
   byAgent: { agent: string; count: number; costCents: number; avgLatencyMs: number }[];
   topUsers: { userId: string; email: string; name: string | null; count: number; costCents: number }[];
-  byModel: { model: string; count: number; costCents: number; avgLatencyMs: number; failedCount: number }[];
+  byModel: ModelStats[];
   dailyTrend: { date: string; count: number; costCents: number; failed: number }[];
 }
 
@@ -27,8 +48,18 @@ const AGENT_LABEL: Record<string, string> = {
   quiz_generator: '📝 توليد الاختبارات'
 };
 
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: 'Anthropic مباشر',
+  openai_compatible: 'متوافق مع OpenAI (OpenRouter أو مشابه)',
+  mock: '⚠️ وضع تجريبي (Mock) — بدون مفتاح API حقيقي'
+};
+
 function fmtNumber(n: number) {
   return n.toLocaleString('ar-SA');
+}
+
+function fmtDate(iso: string | null) {
+  return iso ? new Date(iso).toLocaleDateString('ar-SA') : null;
 }
 
 export function AiUsageClient() {
@@ -55,6 +86,23 @@ export function AiUsageClient() {
           كل رقم هنا من جدول AiGeneration الحقيقي — كل استدعاء LLM (ناجح، فاشل، أو من الكاش) يُسجَّل هناك.
         </p>
       </div>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wide text-ink-400">الموديل المستخدم الآن</h3>
+          <span className="text-xs font-semibold text-ink-400">
+            المزوّد: <span className="text-ink-700">{PROVIDER_LABEL[data.currentModels.provider] ?? data.currentModels.provider}</span>
+          </span>
+        </div>
+        <p className="mb-3 text-xs text-ink-400">
+          مقروء مباشرة من إعدادات البيئة الحالية (env vars) — أي تغيير بالموديل بالاستضافة ينعكس هنا تلقائيًا،
+          وأي موديل نستخدمه بالمستقبل بيظهر بجدول &quot;مقارنة الموديلات&quot; تحت بمجرد أول استدعاء له.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <ModelCard label="⚡ السريع (Fast tier)" sub="استخراج المفاهيم، ربط المفاهيم، توليد الاختبارات" model={data.currentModels.fast.model} stats={data.currentModels.fast.stats} />
+          <ModelCard label="🧠 القوي (Strong tier)" sub="البحث عن الروابط، نقد الروابط" model={data.currentModels.strong.model} stats={data.currentModels.strong.stats} />
+        </div>
+      </section>
 
       <section>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">الحجم</h3>
@@ -116,25 +164,48 @@ export function AiUsageClient() {
 
       <section>
         <h2 className="mb-3 text-sm font-bold text-ink-900">مقارنة الموديلات</h2>
+        <p className="mb-3 text-xs text-ink-400">كل موديل استُخدم من قبل — الحالي منها مؤشّر بشارة، والباقي سجل تاريخي.</p>
         <div className="overflow-x-auto rounded-xl2 border border-ink-100 bg-surface">
           <table className="w-full text-sm">
             <thead className="bg-ink-50 text-ink-500">
               <tr>
                 <th className="px-4 py-2 text-right">الموديل</th>
                 <th className="px-4 py-2 text-right">عدد الطلبات</th>
+                <th className="px-4 py-2 text-right">توكنز (إدخال ← إخراج)</th>
                 <th className="px-4 py-2 text-right">التكلفة (دولار)</th>
                 <th className="px-4 py-2 text-right">متوسط الزمن</th>
                 <th className="px-4 py-2 text-right">فاشلة</th>
+                <th className="px-4 py-2 text-right">أول / آخر استخدام</th>
               </tr>
             </thead>
             <tbody>
+              {data.byModel.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center text-ink-400">
+                    ما فيه استدعاءات مسجّلة بعد.
+                  </td>
+                </tr>
+              )}
               {data.byModel.map((m) => (
                 <tr key={m.model} className="border-t border-ink-100">
-                  <td className="px-4 py-2 font-mono text-xs text-ink-800">{m.model}</td>
+                  <td className="px-4 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-xs text-ink-800">{m.model}</span>
+                      {m.isCurrentFast && <Badge>حالي · سريع</Badge>}
+                      {m.isCurrentStrong && <Badge>حالي · قوي</Badge>}
+                    </div>
+                  </td>
                   <td className="px-4 py-2 text-ink-500">{fmtNumber(m.count)}</td>
+                  <td dir="ltr" className="px-4 py-2 text-ink-500">
+                    {fmtNumber(m.totalInputTokens)} ← {fmtNumber(m.totalOutputTokens)}
+                    <span className="mr-1 text-ink-300">(متوسط {fmtNumber(m.avgInputTokens)}←{fmtNumber(m.avgOutputTokens)})</span>
+                  </td>
                   <td className="px-4 py-2 text-ink-500">${(m.costCents / 100).toFixed(2)}</td>
                   <td className="px-4 py-2 text-ink-500">{fmtNumber(m.avgLatencyMs)}ms</td>
                   <td className={'px-4 py-2 ' + (m.failedCount > 0 ? 'text-accent-600' : 'text-ink-500')}>{m.failedCount}</td>
+                  <td className="px-4 py-2 text-xs text-ink-400">
+                    {fmtDate(m.firstUsedAt)} — {fmtDate(m.lastUsedAt)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -204,6 +275,47 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'wa
     <div className="rounded-xl2 border border-ink-100 bg-surface p-4 shadow-card">
       <p className="text-xs text-ink-400">{label}</p>
       <p className={'mt-1 text-lg font-extrabold ' + (tone === 'warn' ? 'text-accent-600' : 'text-ink-900')}>{value}</p>
+    </div>
+  );
+}
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return <span className="rounded-full bg-accent-50 px-2 py-0.5 text-[10px] font-bold text-accent-600">{children}</span>;
+}
+
+function ModelCard({ label, sub, model, stats }: { label: string; sub: string; model: string; stats: ModelStats | null }) {
+  return (
+    <div className="rounded-xl2 border border-accent-200/50 bg-surface p-4 shadow-card">
+      <p className="text-xs font-bold text-ink-400">{label}</p>
+      <p className="mt-1 break-all font-mono text-sm font-extrabold text-ink-900">{model}</p>
+      <p className="mt-0.5 text-[11px] text-ink-400">{sub}</p>
+
+      {stats ? (
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-ink-100 pt-3 text-xs">
+          <div>
+            <p className="text-ink-400">مستخدم منذ</p>
+            <p className="font-semibold text-ink-800">{fmtDate(stats.firstUsedAt)}</p>
+          </div>
+          <div>
+            <p className="text-ink-400">عدد الطلبات</p>
+            <p className="font-semibold text-ink-800">{fmtNumber(stats.count)}</p>
+          </div>
+          <div>
+            <p className="text-ink-400">متوسط زمن الاستجابة</p>
+            <p className="font-semibold text-ink-800">{fmtNumber(stats.avgLatencyMs)}ms</p>
+          </div>
+          <div>
+            <p className="text-ink-400">متوسط توكنز (إدخال ← إخراج)</p>
+            <p dir="ltr" className="font-semibold text-ink-800">
+              {fmtNumber(stats.avgInputTokens)} ← {fmtNumber(stats.avgOutputTokens)}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 border-t border-ink-100 pt-3 text-xs text-ink-400">
+          ما استُخدم أي استدعاء فعلي بهذا الموديل بعد — بيظهر أداءه هنا أول ما يُستخدم.
+        </p>
+      )}
     </div>
   );
 }

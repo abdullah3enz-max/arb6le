@@ -8,13 +8,18 @@ export type ModelTier = 'fast' | 'strong';
 
 const cache = new Map<string, LlmCallResult>();
 
+interface ProviderConfig {
+  provider: 'anthropic' | 'openai_compatible' | 'mock';
+  model: string;
+}
+
 /**
- * Provider-agnostic by design: LLM_PROVIDER picks the backend explicitly, or — if unset —
- * the first one with credentials configured wins. No vendor is hardcoded as "the" provider;
- * adding a new one is a new class in providers/ plus a branch here, never a rewrite of the
- * agents (they only ever call routedComplete).
+ * Pure resolution of what buildProvider() would construct for a tier, with no side effects and
+ * no throwing — shared by buildProvider (real calls) and describeConfiguredModels (admin
+ * dashboard) so the two can never drift apart. Whatever the dashboard reports as "current model"
+ * is exactly what the next real call will use, not a best guess kept in sync by hand.
  */
-function buildProvider(tier: ModelTier): LlmProvider {
+function resolveProviderConfig(tier: ModelTier): ProviderConfig {
   const requested = process.env.LLM_PROVIDER; // 'anthropic' | 'openai_compatible' | unset (auto)
 
   const wantsAnthropic = requested === 'anthropic' || (!requested && process.env.ANTHROPIC_API_KEY);
@@ -23,12 +28,34 @@ function buildProvider(tier: ModelTier): LlmProvider {
       tier === 'fast'
         ? process.env.ANTHROPIC_MODEL_FAST ?? 'claude-haiku-4-5-20251001'
         : process.env.ANTHROPIC_MODEL_STRONG ?? 'claude-sonnet-5';
-    return new AnthropicProvider(model);
+    return { provider: 'anthropic', model };
   }
 
   const wantsOpenAiCompatible =
     requested === 'openai_compatible' || (!requested && process.env.OPENAI_COMPATIBLE_API_KEY);
   if (wantsOpenAiCompatible) {
+    const model =
+      (tier === 'fast' ? process.env.OPENAI_COMPATIBLE_MODEL_FAST : process.env.OPENAI_COMPATIBLE_MODEL_STRONG) ??
+      process.env.OPENAI_COMPATIBLE_MODEL ??
+      '(OPENAI_COMPATIBLE_MODEL غير معرّف)';
+    return { provider: 'openai_compatible', model };
+  }
+
+  return { provider: 'mock', model: 'mock-offline' };
+}
+
+/**
+ * Provider-agnostic by design: LLM_PROVIDER picks the backend explicitly, or — if unset —
+ * the first one with credentials configured wins. No vendor is hardcoded as "the" provider;
+ * adding a new one is a new class in providers/ plus a branch here, never a rewrite of the
+ * agents (they only ever call routedComplete).
+ */
+function buildProvider(tier: ModelTier): LlmProvider {
+  const config = resolveProviderConfig(tier);
+
+  if (config.provider === 'anthropic') return new AnthropicProvider(config.model);
+
+  if (config.provider === 'openai_compatible') {
     const baseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL;
     const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY;
     if (!baseUrl || !apiKey) {
@@ -36,18 +63,28 @@ function buildProvider(tier: ModelTier): LlmProvider {
         'LLM_PROVIDER=openai_compatible requires OPENAI_COMPATIBLE_BASE_URL and OPENAI_COMPATIBLE_API_KEY.'
       );
     }
-    const model =
-      (tier === 'fast' ? process.env.OPENAI_COMPATIBLE_MODEL_FAST : process.env.OPENAI_COMPATIBLE_MODEL_STRONG) ??
-      process.env.OPENAI_COMPATIBLE_MODEL;
-    if (!model) {
+    if (!process.env.OPENAI_COMPATIBLE_MODEL_FAST && !process.env.OPENAI_COMPATIBLE_MODEL_STRONG && !process.env.OPENAI_COMPATIBLE_MODEL) {
       throw new Error(
         'Set OPENAI_COMPATIBLE_MODEL (or _FAST/_STRONG) to the exact model name your provider expects.'
       );
     }
-    return new OpenAiCompatibleProvider({ baseUrl, apiKey, model, name: process.env.OPENAI_COMPATIBLE_NAME });
+    return new OpenAiCompatibleProvider({ baseUrl, apiKey, model: config.model, name: process.env.OPENAI_COMPATIBLE_NAME });
   }
 
   return new MockProvider();
+}
+
+/**
+ * What the admin AI Usage dashboard shows as "the model we use now" — safe to call even with a
+ * broken/unconfigured openai_compatible setup (unlike buildProvider, which throws), since this
+ * is describing config, not making a call.
+ */
+export function describeConfiguredModels(): { provider: ProviderConfig['provider']; fast: string; strong: string } {
+  return {
+    provider: resolveProviderConfig('fast').provider, // one provider serves both tiers
+    fast: resolveProviderConfig('fast').model,
+    strong: resolveProviderConfig('strong').model
+  };
 }
 
 interface RoutedCallArgs extends LlmCallOptions {

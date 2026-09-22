@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { AuthError } from '@/lib/auth';
 import { requirePermission } from '@/lib/rbac';
+import { describeConfiguredModels } from '@/lib/ai/router';
 
 /**
  * Item 9 (AI Usage Center). Every number here comes straight from AiGeneration rows written by
@@ -37,8 +38,10 @@ export async function GET() {
         db.aiGeneration.groupBy({
           by: ['model'],
           _count: true,
-          _sum: { costCents: true },
-          _avg: { latencyMs: true }
+          _sum: { costCents: true, inputTokens: true, outputTokens: true },
+          _avg: { latencyMs: true, inputTokens: true, outputTokens: true },
+          _min: { createdAt: true },
+          _max: { createdAt: true }
         }),
         db.aiGeneration.groupBy({
           by: ['userId'],
@@ -76,13 +79,26 @@ export async function GET() {
     }
     const dailyTrend = Array.from(dailyBuckets.entries()).map(([date, b]) => ({ date, ...b }));
 
+    const currentModels = describeConfiguredModels();
+
     const byModelWithFailures = await Promise.all(
       byModel.map(async (m) => ({
         model: m.model,
         count: m._count,
         costCents: m._sum.costCents ?? 0,
+        totalInputTokens: m._sum.inputTokens ?? 0,
+        totalOutputTokens: m._sum.outputTokens ?? 0,
+        avgInputTokens: Math.round(m._avg.inputTokens ?? 0),
+        avgOutputTokens: Math.round(m._avg.outputTokens ?? 0),
         avgLatencyMs: Math.round(m._avg.latencyMs ?? 0),
-        failedCount: await db.aiGeneration.count({ where: { model: m.model, success: false } })
+        failedCount: await db.aiGeneration.count({ where: { model: m.model, success: false } }),
+        firstUsedAt: m._min.createdAt,
+        lastUsedAt: m._max.createdAt,
+        // Flags this row as whichever tier(s) the current env config would route to right now —
+        // the same live-resolved value the "current model" card above the table shows, so the
+        // two can never say something different about what's actually active.
+        isCurrentFast: m.model === currentModels.fast,
+        isCurrentStrong: m.model === currentModels.strong
       }))
     );
 
@@ -94,7 +110,18 @@ export async function GET() {
 
     const total = totalAgg._count;
 
+    // Same rows the table below shows, just picked out for the "current model" summary card —
+    // null when that tier's configured model has never actually been called yet (e.g. just
+    // switched in CranL and no document has been processed since).
+    const currentFastStats = byModelWithFailures.find((m) => m.model === currentModels.fast) ?? null;
+    const currentStrongStats = byModelWithFailures.find((m) => m.model === currentModels.strong) ?? null;
+
     return NextResponse.json({
+      currentModels: {
+        provider: currentModels.provider,
+        fast: { model: currentModels.fast, stats: currentFastStats },
+        strong: { model: currentModels.strong, stats: currentStrongStats }
+      },
       totalRequests: total,
       requestsToday,
       requestsThisMonth,
