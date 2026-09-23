@@ -212,18 +212,29 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
 
       {withoutConnection.length > 0 && (
         <Section title="🧠 تحتاج حفظ">
+          <p className="-mt-3 mb-3 text-xs leading-relaxed text-ink-400">
+            ما لقينا لها رابط ذاكرة قوي وصادق — فما اخترعنا لك واحد. صارت بطاقة تعليمية جاهزة تحفظها مباشرة.
+          </p>
           <div className="space-y-3">
             {withoutConnection.map((c) => (
-              <div key={c.id} className="rounded-xl2 border border-amber-100 bg-amber-50/60 p-4">
-                <div className="mb-1 flex items-center gap-2 font-bold text-ink-900">
-                  <span>{c.atomEmoji}</span>
-                  <span>{c.atomLabel || c.title}</span>
+              <div
+                key={c.id}
+                className="rounded-xl2 border border-dashed border-accent-300/40 bg-gradient-to-b from-surface-raised to-surface p-5 transition hover:border-accent-300/60"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-50 text-lg">{c.atomEmoji}</div>
+                  <p className="font-extrabold text-ink-900">{c.atomLabel || c.title}</p>
                 </div>
-                <p className="text-sm text-ink-700">{c.summary}</p>
-                <p className="mt-2 text-xs font-semibold text-amber-700">
-                  لم نجد رابطًا قويًا لهذه المعلومة، فما اخترعنا لك واحد — بس صارت بطاقة تعليمية جاهزة
-                  في Study Mode عشان تحفظها مباشرة.
-                </p>
+                <p className="mt-3 text-sm leading-relaxed text-ink-600">{c.summary}</p>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-ink-100 pt-3">
+                  <p className="flex items-center gap-1.5 text-xs text-ink-500">
+                    <span>💡</span>
+                    بدون رابط ملفّق — بس بطاقة مباشرة تحفظها
+                  </p>
+                  <Link href="/study" className="text-xs font-extrabold text-accent-500 hover:text-accent-600">
+                    افتح في Study Mode ←
+                  </Link>
+                </div>
               </div>
             ))}
           </div>
@@ -266,12 +277,24 @@ function MindMap({ concepts }: { concepts: ConceptRow[] }) {
   if (concepts.length === 0) return null;
   const sorted = [...concepts].sort((a, b) => a.orderIndex - b.orderIndex);
   const linkedCount = sorted.filter((c) => c.connections.length > 0).length;
+  const pct = Math.round((linkedCount / sorted.length) * 100);
 
   return (
     <Section title="🧠 خريطة المادة">
-      <p className="-mt-3 mb-3 text-xs text-ink-400">
-        {linkedCount} من {sorted.length} معلومة لقت لها رابط ذاكرة قوي 🔗
-      </p>
+      <div className="-mt-3 mb-4 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-400">
+          {linkedCount} من {sorted.length} معلومة لقت لها رابط ذاكرة قوي 🔗
+        </p>
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 w-32 overflow-hidden rounded-full bg-ink-200">
+            <div className="h-full rounded-full bg-gradient-to-r from-accent-700 to-accent-500" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-xs font-extrabold text-accent-500" dir="ltr">
+            {pct}%
+          </span>
+        </div>
+      </div>
+
       <div className="scrollbar-thin flex items-center overflow-x-auto rounded-xl2 border border-ink-100 bg-surface p-6" style={{ perspective: '1000px' }}>
         {sorted.map((c, i) => {
           const linked = c.connections.length > 0;
@@ -280,26 +303,56 @@ function MindMap({ concepts }: { concepts: ConceptRow[] }) {
               <TiltCard maxTilt={8}>
                 <div
                   className={
-                    'relative w-40 shrink-0 rounded-xl border p-3 text-center ' +
-                    (linked ? 'border-accent-300/40 bg-ink-50 shadow-glow' : 'border-ink-100 bg-ink-50')
+                    'relative flex h-[126px] w-[150px] shrink-0 flex-col items-center justify-center gap-2 rounded-xl2 p-3 text-center transition duration-200 hover:-translate-y-1 ' +
+                    (linked
+                      ? 'border border-accent-300/40 bg-gradient-to-b from-surface-raised to-surface shadow-glow'
+                      : 'border border-dashed border-ink-300 bg-surface opacity-60')
                   }
                 >
-                  <span className="absolute -right-2 -top-2 text-sm">{linked ? '🔗' : '⚪'}</span>
-                  <p className="mb-1 text-lg">{c.atomEmoji}</p>
-                  <p className="text-xs font-bold text-ink-800">{c.title}</p>
+                  <span
+                    className={
+                      'absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full text-[11px] ' +
+                      (linked ? 'bg-accent-500 shadow-[0_4px_10px_-2px_rgba(255,59,76,0.6)]' : 'border border-ink-300 bg-ink-200 text-ink-500')
+                    }
+                  >
+                    {linked ? '🔗' : '؟'}
+                  </span>
+                  <p className={'text-2xl ' + (linked ? '' : 'opacity-70 grayscale')}>{c.atomEmoji}</p>
+                  <p className={'text-xs font-extrabold leading-tight ' + (linked ? 'text-ink-900' : 'text-ink-600')}>{c.title}</p>
                 </div>
               </TiltCard>
               {i < sorted.length - 1 && (
-                <div className="relative mx-1 h-px w-10 shrink-0 bg-gradient-to-l from-accent-500/60 via-accent-500/20 to-transparent">
-                  <span
-                    className="animate-ping-slow absolute right-0 top-1/2 h-1.5 w-1.5 rounded-full bg-accent-500"
-                    style={{ animationDelay: `${i * 0.15}s` }}
-                  />
+                <div className="relative mx-1 h-3 w-14 shrink-0">
+                  <svg width="56" height="12" viewBox="0 0 56 12" className="overflow-visible">
+                    <line
+                      x1="56"
+                      y1="6"
+                      x2="0"
+                      y2="6"
+                      strokeWidth="2"
+                      strokeDasharray="5 6"
+                      className={linked ? 'animate-dash-flow stroke-accent-300' : 'stroke-ink-300'}
+                    />
+                  </svg>
+                  {linked && (
+                    <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-accent-500" />
+                  )}
                 </div>
               )}
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-5 text-[11px] text-ink-400">
+        <span className="flex items-center gap-1.5">
+          <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent-500 text-[8px]">🔗</span>
+          لقى رابط ذاكرة قوي
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3.5 w-3.5 rounded-full border border-dashed border-ink-300" />
+          يحتاج حفظ مباشر (بدون رابط ملفّق)
+        </span>
       </div>
     </Section>
   );

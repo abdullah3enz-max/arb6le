@@ -74,6 +74,9 @@ const config: Config = {
         'spin-slow': {
           '0%': { transform: 'rotate(0deg)' },
           '100%': { transform: 'rotate(360deg)' }
+        },
+        'dash-flow': {
+          to: { strokeDashoffset: '-22' }
         }
       },
       animation: {
@@ -81,7 +84,8 @@ const config: Config = {
         shimmer: 'shimmer 2s linear infinite',
         float: 'float 3.6s ease-in-out infinite',
         'ping-slow': 'ping-slow 2s cubic-bezier(0,0,0.2,1) infinite',
-        'spin-slow': 'spin-slow 16s linear infinite'
+        'spin-slow': 'spin-slow 16s linear infinite',
+        'dash-flow': 'dash-flow 1.3s linear infinite'
       }
     }
   },
