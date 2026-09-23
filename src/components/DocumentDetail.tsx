@@ -71,6 +71,10 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
   const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
   const [regeneratingQuiz, setRegeneratingQuiz] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
+  // Every one of these buttons used to fire its fetch and show nothing back — a click that
+  // silently succeeded (LOVE) or silently found no better alternative (regenerate) looked
+  // identical to a broken button. This is the per-card message that closes that gap.
+  const [actionMessage, setActionMessage] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/documents/${documentId}`);
@@ -94,22 +98,46 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     return () => clearInterval(interval);
   }, [load]);
 
+  function setMessage(connectionId: string, message: string | null) {
+    setActionMessage((current) => {
+      const next = { ...current };
+      if (message) next[connectionId] = message;
+      else delete next[connectionId];
+      return next;
+    });
+  }
+
   async function sendFeedback(connectionId: string, reaction: 'LOVE' | 'LIKE' | 'NEUTRAL' | 'DISLIKE' | 'INCORRECT') {
-    await fetch(`/api/connections/${connectionId}/feedback`, {
+    const res = await fetch(`/api/connections/${connectionId}/feedback`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reaction })
     });
+    if (!res.ok) {
+      setMessage(connectionId, 'تعذّر حفظ تقييمك، حاول مرة ثانية.');
+    } else if (reaction === 'LOVE' || reaction === 'LIKE') {
+      setMessage(connectionId, '🙏 شكرًا لتقييمك!');
+    }
   }
 
   async function regenerate(connectionId: string, differentCategory: boolean) {
     setBusyConnectionId(connectionId);
+    setMessage(connectionId, null);
     try {
-      await fetch(`/api/connections/${connectionId}/regenerate`, {
+      const res = await fetch(`/api/connections/${connectionId}/regenerate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ differentCategory })
       });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setMessage(connectionId, data?.error ?? 'تعذّرت إعادة الربط، حاول مرة ثانية.');
+        return;
+      }
+      if (!data?.connection) {
+        setMessage(connectionId, data?.message ?? 'ما لقينا رابط ثاني قوي وصادق لهذا المفهوم.');
+        return;
+      }
       await load();
     } finally {
       setBusyConnectionId(null);
@@ -195,16 +223,22 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
         <Section title="🔥 أفضل الروابط">
           <div className="grid gap-4 md:grid-cols-2">
             {topLinks.map(({ concept, connection }) => (
-              <ConnectionCard
-                key={connection.id}
-                data={toCardData(concept, connection)}
-                onLove={() => sendFeedback(connection.id, 'LOVE')}
-                onDidntGetIt={() => {
-                  sendFeedback(connection.id, 'DISLIKE');
-                  regenerate(connection.id, false);
-                }}
-                onDifferentInterest={() => regenerate(connection.id, true)}
-              />
+              <div key={connection.id}>
+                <ConnectionCard
+                  data={toCardData(concept, connection)}
+                  disabled={busyConnectionId === connection.id}
+                  onLove={() => sendFeedback(connection.id, 'LOVE')}
+                  onDidntGetIt={() => {
+                    sendFeedback(connection.id, 'DISLIKE');
+                    regenerate(connection.id, false);
+                  }}
+                  onDifferentInterest={() => regenerate(connection.id, true)}
+                />
+                {busyConnectionId === connection.id && <p className="mt-1.5 px-1 text-xs text-ink-400">نبحث عن رابط ثاني...</p>}
+                {actionMessage[connection.id] && (
+                  <p className="mt-1.5 px-1 text-xs font-semibold text-ink-400">{actionMessage[connection.id]}</p>
+                )}
+              </div>
             ))}
           </div>
         </Section>
@@ -258,8 +292,6 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
           </div>
         </Section>
       )}
-
-      {busyConnectionId && <p className="text-sm text-ink-400">نبحث عن رابط ثاني...</p>}
     </div>
   );
 }

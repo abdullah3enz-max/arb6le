@@ -25,7 +25,8 @@ export function ConnectionCard({
   onLove,
   onDidntGetIt,
   onDifferentInterest,
-  differentInterestLabel = '🔄 اربطها بشيء آخر'
+  differentInterestLabel = '🔄 اربطها بشيء آخر',
+  disabled = false
 }: {
   data: ConnectionCardData;
   onLove?: () => void;
@@ -34,6 +35,9 @@ export function ConnectionCard({
   /** Lets a read-only context (e.g. the landing page demo) relabel this action without pulling
    * in feedback semantics that don't apply there ("was this good?" makes no sense on a canned example). */
   differentInterestLabel?: string;
+  /** True while a regenerate call for this exact card is in flight — blocks a second click
+   * from firing another one before the first has resolved. */
+  disabled?: boolean;
 }) {
   const [flipped, setFlipped] = useState(false);
 
@@ -96,16 +100,18 @@ export function ConnectionCard({
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl2 border border-ink-100 bg-ink-50/60 px-5 py-3">
           {onLove && (
             <button
-              className="rounded-full bg-accent-500 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-600"
+              className="rounded-full bg-accent-500 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-600 disabled:opacity-50"
               onClick={onLove}
+              disabled={disabled}
             >
               👍 ممتاز
             </button>
           )}
           {onDidntGetIt && (
             <button
-              className="rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100"
+              className="rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100 disabled:opacity-50"
               onClick={onDidntGetIt}
+              disabled={disabled}
             >
               👎 ما فهمته
             </button>
@@ -113,10 +119,11 @@ export function ConnectionCard({
           {onDifferentInterest && (
             <button
               className={
-                'rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100 ' +
+                'rounded-full border border-ink-100 px-4 py-1.5 text-xs font-semibold text-ink-700 transition hover:bg-ink-100 disabled:opacity-50 ' +
                 (onLove || onDidntGetIt ? 'mr-auto' : 'mx-auto')
               }
               onClick={onDifferentInterest}
+              disabled={disabled}
             >
               {differentInterestLabel}
             </button>
