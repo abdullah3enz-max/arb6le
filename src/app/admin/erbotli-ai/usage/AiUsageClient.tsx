@@ -116,7 +116,7 @@ export function AiUsageClient() {
       <section>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">التكلفة والأداء</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Stat label="التكلفة التقديرية (دولار)" value={(data.totalCostCents / 100).toFixed(2)} />
+          <Stat label="التكلفة (دولار)" value={(data.totalCostCents / 100).toFixed(2)} />
           <Stat label="توكنز الإدخال" value={fmtNumber(data.totalInputTokens)} />
           <Stat label="توكنز الإخراج" value={fmtNumber(data.totalOutputTokens)} />
           <Stat label="متوسط زمن التوليد" value={`${fmtNumber(data.avgLatencyMs)} ms`} />

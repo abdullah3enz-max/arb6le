@@ -21,6 +21,13 @@ export interface LlmCallResult {
   outputTokens: number;
   /** True only for the offline mock provider — callers must never present this as fact. */
   isMock: boolean;
+  /**
+   * Actual USD cost of this call, when the provider reports one (e.g. OpenRouter's per-request
+   * usage accounting). Undefined — never 0 — when the provider doesn't report it, so the router
+   * can tell "really free" apart from "unknown" and fall back to an estimate only in the latter
+   * case.
+   */
+  costUsd?: number;
 }
 
 export interface LlmProvider {

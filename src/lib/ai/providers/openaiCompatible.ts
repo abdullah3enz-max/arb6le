@@ -43,6 +43,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         // through), which is worse than the noisy-but-present text our own parseJsonResponse
         // extraction (router.ts) is built to handle. The system prompts already ask for JSON.
         //
+        // OpenRouter-specific: asks it to echo back the real dollar cost of this exact call in
+        // `usage.cost` (its documented usage-accounting extension) so recordGeneration can log
+        // actual spend instead of guessing. Harmless on any other OpenAI-compatible backend —
+        // an unrecognized field is just ignored, and `data.usage?.cost` below stays undefined.
+        usage: { include: true },
         // Merged in verbatim from OPENAI_COMPATIBLE_EXTRA_BODY (see router.ts) — this is how a
         // reasoning-capable model (e.g. openai/gpt-oss-120b via OpenRouter) gets throttled down
         // with something like {"reasoning":{"effort":"low"}}, without this generic adapter
@@ -68,7 +73,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       model: data.model ?? this.model,
       inputTokens: data.usage?.prompt_tokens ?? 0,
       outputTokens: data.usage?.completion_tokens ?? 0,
-      isMock: false
+      isMock: false,
+      costUsd: typeof data.usage?.cost === 'number' ? data.usage.cost : undefined
     };
   }
 }

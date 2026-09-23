@@ -156,7 +156,10 @@ export async function routedComplete(args: RoutedCallArgs): Promise<LlmCallResul
       latencyMs,
       cacheHit: false,
       success: true,
-      costCents: estimateCostCents(provider.name, args.tier, result.inputTokens, result.outputTokens)
+      costCents:
+        result.costUsd !== undefined
+          ? result.costUsd * 100
+          : estimateCostCents(provider.name, args.tier, result.inputTokens, result.outputTokens)
     });
 
     return result;
@@ -186,10 +189,15 @@ async function recordGeneration(
   });
 }
 
+/**
+ * Fallback only — used when the provider didn't report a real cost (result.costUsd is
+ * undefined), e.g. Anthropic (no per-call cost in its API response) or an OpenAI-compatible
+ * backend that doesn't support OpenRouter's usage-accounting extension. OpenRouter calls
+ * normally skip this entirely: openaiCompatible.ts reads the actual dollar cost straight off
+ * `usage.cost` and routedComplete uses that instead, so real spend on a paid model is never
+ * silently logged as free.
+ */
 function estimateCostCents(providerName: string, tier: ModelTier, inputTokens: number, outputTokens: number) {
-  // Only Anthropic's published per-token rates are known here — a third-party/free
-  // OpenAI-compatible provider's real cost is whatever that provider charges (often $0),
-  // so we don't fabricate a rate for it rather than mislabel spend on the admin dashboard.
   if (providerName !== 'anthropic') return 0;
   const rates = tier === 'fast' ? { in: 0.025, out: 0.125 } : { in: 0.3, out: 1.5 };
   return (inputTokens / 1000) * rates.in + (outputTokens / 1000) * rates.out;
