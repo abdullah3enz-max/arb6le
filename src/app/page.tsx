@@ -80,7 +80,7 @@ export default function LandingPage() {
             </span>
             Personalized Memory Engine
           </div>
-          <h1 className="animate-fade-up text-balance text-5xl font-extrabold leading-[1.05] text-ink-900 md:text-7xl lg:text-8xl">
+          <h1 className="animate-fade-up text-balance text-5xl font-extrabold leading-[1.2] text-ink-900 md:text-7xl lg:text-8xl">
             اربطها بطريقة
             <br />
             <span className="text-accent-500">ما تنساها</span> ❤️
