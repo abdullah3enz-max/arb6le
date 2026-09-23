@@ -6,7 +6,13 @@ const CRITIC_CHECKS = [
   { key: 'relationship_real', question: 'هل التطابق حقيقي (نفس الرقم/الاسم فعلًا)، وليس تشابه سطحي أو صدفة؟' },
   { key: 'hallucination', question: 'هل يوجد أي تفصيلة مُخترعة (مباراة، حوار، إحصائية، حدث لم يحدث)؟' },
   { key: 'too_slow', question: 'هل يحتاج المستخدم أكثر من ثانيتين ليفهم الرابط من أول قراءة؟' },
-  { key: 'weak_familiarity', question: 'هل هذا فعلًا شيء يعرفه المستخدم من اهتماماته، وليس تخمين عام؟' }
+  { key: 'weak_familiarity', question: 'هل هذا فعلًا شيء يعرفه المستخدم من اهتماماته، وليس تخمين عام؟' },
+  {
+    key: 'forced_by_preference',
+    question:
+      'اختبار Counterfactual: لو افترضنا إن المستخدم أصلًا ما يهتم بـ"worldRef" هذا، هل الرابط لسا حقيقي وواضح ومفهوم لأي شخص عادي؟ ' +
+      'لو الرابط ما إله أي معنى أو قوة إلا لأنه "الشي اللي يحبه المستخدم" — بدون تطابق حقيقي مستقل عن ذلك — فهذا فشل.'
+  }
 ] as const;
 
 /**
@@ -38,10 +44,14 @@ export async function critiqueConnection(
           CRITIC_CHECKS.map((c, i) => `${i + 1}. [${c.key}] ${c.question}`).join('\n') +
           '\nإذا كانت إجابة factual_accuracy أو relationship_real أو hallucination "لا/نعم فيه مشكلة" ' +
           '→ REJECT فورًا بذاك الـkey. إذا too_slow = "نعم يحتاج وقت" → REJECT بـtoo_slow. إذا ' +
-          'weak_familiarity = "ضعيف" → REJECT بـweak_familiarity. الـbridgeLine يجب يكون سطر واحد ' +
+          'weak_familiarity = "ضعيف" → REJECT بـweak_familiarity. إذا فشل اختبار forced_by_preference ' +
+          '(الرابط بلا معنى بدون اهتمام المستخدم تحديدًا) → REJECT بـforced_by_preference — هذا مستقل ' +
+          'تمامًا عن relationship_real: رابط ممكن يكون "حقيقي" تقنيًا (نفس الاسم/الرقم) لكن لسا يفشل ' +
+          'هذا الاختبار لو محتاج معرفة شخصية بالمستخدم عشان يصير مفهوم، بدل ما يكون منطقي بذاته. ' +
+          'الـbridgeLine يجب يكون سطر واحد ' +
           'قصير جدًا — لو فيه أكثر من جملة قصيرة أو كلمة "تخيل" أو سرد، ارفضه بـtoo_slow. أرجع JSON ' +
           'فقط: {"verdict":"APPROVE|REJECT","failedCheck":"factual_accuracy|relationship_real|' +
-          'hallucination|too_slow|weak_familiarity"|null,"reason":"شرح قصير بالعربي"}'
+          'hallucination|too_slow|weak_familiarity|forced_by_preference"|null,"reason":"شرح قصير بالعربي"}'
       },
       {
         role: 'user',

@@ -38,7 +38,11 @@ const LADDER_GUIDE =
   'الرقم أو الحقيقة نفسها إطلاقًا، فقط اربطها.';
 
 /**
- * STEP 9: search for real bridges inside the user's worlds.
+ * STEP 9: search for real bridges — starting in the user's saved worlds (closest to personal
+ * memory), but never confined to them. A concept with no honest bridge inside those interests
+ * can still surface a GENERAL_KNOWLEDGE candidate (a widely-known fact, unrelated to anything
+ * this student told us they like), rather than forcing a weak analogy just to stay "personal".
+ * Interests are a prior that biases search and scoring, never a hard boundary on it.
  * Two lanes:
  *  - KNOWLEDGE_BASE lane: stable, non-time-sensitive facts (a player's real jersey number,
  *    a film's real plot) — LLM may draft from training knowledge, but every one still goes
@@ -82,23 +86,30 @@ export async function findConnectionCandidates(
           'لكنها يجب أن تسمّي الآلية الحقيقية وراء الربط بوضوح (الاسم العلمي المستخدم، أو الحقيقة ' +
           'المشهورة نفسها) — ممنوع جملة فاضية زي "لأنه معروف بهذا" بدون ذكر الحقيقة الفعلية. ' +
           'لا تتوقف عند أول فشل: إذا ما وجدت DIRECT_MATCH أو PHONETIC قوي، انزل بسلّم الأولوية ' +
-          '(VISUAL ← FAMOUS_ASSOCIATION ← CONTEXTUAL) حتى تصل لأضعف مستوى ممكن، وقدّم أفضل ربط ' +
-          'معقول تقدر تبنيه بأحد اهتمامات المستخدم المذكورة بالأسفل — حتى لو ما كان مثاليًا أو ' +
-          'مستوى DIRECT_MATCH. ممنوع ترفض رابطًا لمجرد إنه "مو قوي كفاية" وحده طالما هو حقيقي ' +
-          'وغير مُخترع ويُفهم خلال ثوانٍ قليلة. أرجع مصفوفة فاضية فقط في حالة واحدة نادرة: ما فيه ' +
-          'أي ربط منطقي ممكن إطلاقًا حتى بمستوى CONTEXTUAL بأي من الاهتمامات المذكورة. ' +
-          'قاعدة صارمة على worldRef: يجب أن يكون اسمًا مذكورًا حرفيًا بقائمة "عوالم المستخدم" ' +
-          'بالأسفل — لا تقترح اسمًا مشابهًا أو من نفس الفئة لكنه غير مكتوب فيها (مثلًا: المستخدم ' +
-          'ذاكر "Messi" فقط بكرة القدم، فممنوع تقترح "Ronaldo" أو أي لاعب ثاني حتى لو الرابط أقوى) ' +
-          '— ابقَ داخل القائمة المذكورة فقط، وابذل جهدك تلقى فيها ربطًا معقولًا بدل ما تتوسع خارجها ' +
-          'أو تستسلم بسرعة. ' +
+          '(VISUAL ← FAMOUS_ASSOCIATION ← CONTEXTUAL) حتى تصل لأضعف مستوى ممكن. ' +
+          'اهتمامات المستخدم المذكورة بالأسفل هي **دليل على أشياء يعرفها ويحبها فعلًا**، مو حدود ' +
+          'صارمة تحبس بحثك: ابدأ فيها لأن الربط بيها أقرب لذاكرته الشخصية، لكن لو ما لقيت فيها إلا ' +
+          'ربطًا متكلّفًا وضعيفًا (تشابه سطحي، تلاعب كلمات بلا معنى حقيقي)، لا تجبر نفسك عليه — ' +
+          'جرّب معرفة عامة مشهورة يعرفها أي شخص عادي (تاريخ، جغرافيا، علوم، أرقام مشهورة، ثقافة ' +
+          'شعبية) وحطّ لها worldCategory="GENERAL_KNOWLEDGE" بدل فئة من اهتماماته. القاعدة: ' +
+          'رابط حقيقي وواضح خارج اهتماماته أفضل بكثير من رابط متكلّف وضعيف داخلها. ' +
+          'ولّد أكثر من مرشح لما يكون ممكن (من اهتماماته ومن GENERAL_KNOWLEDGE معًا) بدل ما تكتفي ' +
+          'بأول شي يخطر لك. ' +
+          'إذا اقترحت رابطًا من فئة تخص اهتمامات المستخدم (مو GENERAL_KNOWLEDGE)، استخدم فقط اسمًا ' +
+          'مذكورًا حرفيًا بقائمة "عوالم المستخدم" بالأسفل — لا تخترع اسمًا مشابهًا وتّدعي إنه من ' +
+          'اهتماماته (مثلًا: المستخدم ذاكر "Messi" بس، فممنوع تقول عن "Ronaldo" إنه اهتمامه — اقترحه ' +
+          'بدل ذلك كـ GENERAL_KNOWLEDGE إذا كان الرابط قوي). ' +
+          'ممنوع ترفض رابطًا لمجرد إنه "مو قوي كفاية" وحده طالما هو حقيقي وغير مُخترع ويُفهم خلال ' +
+          'ثوانٍ قليلة. أرجع مصفوفة فاضية فقط في حالة واحدة نادرة: ما فيه أي ربط منطقي ممكن إطلاقًا، ' +
+          'لا باهتماماته ولا بمعرفة عامة — عندها الأصدق نرجّع بدون ربط بدل رابط ملفّق. ' +
           liveSearchNote +
           (opts.excludeWorldRefs?.length
-            ? ` لا تكرر هذه الزوايا المستخدمة سابقًا: ${opts.excludeWorldRefs.join(', ')}.`
+            ? ` لا تكرر هذه الزوايا المستخدمة سابقًا لهذا الملف: ${opts.excludeWorldRefs.join(', ')}.`
             : '') +
           ' أرجع JSON: {"candidates": [{' +
           '"associationLevel":"DIRECT_MATCH|PHONETIC|VISUAL|FAMOUS_ASSOCIATION|CONTEXTUAL",' +
-          '"worldCategory","worldRef","atomEmoji","atomLabel","bridgeLine","whyOneLiner",' +
+          '"worldCategory (فئة اهتمام المستخدم، أو GENERAL_KNOWLEDGE لمعرفة عامة خارج اهتماماته)",' +
+          '"worldRef","atomEmoji","atomLabel","bridgeLine","whyOneLiner",' +
           '"claimType":"FACT|ANALOGY|INTERPRETATION",' +
           '"sources":[{"sourceType":"KNOWLEDGE_BASE|LIVE_SEARCH","confidence"(0-1),"evidenceSnippet","title","url"}],' +
           '"scoreBreakdown":{"directness","familiarity","simplicity","memorability","relevance","confusionRisk"} ' +
@@ -120,12 +131,13 @@ export async function findConnectionCandidates(
   const candidates = parsed.candidates ?? [];
 
   // Enforce the LIVE_SEARCH gate in code, not just in the prompt: strip any candidate that
-  // cites LIVE_SEARCH while the provider is unconfigured. Same treatment for worldRef — the
-  // prompt tells the model to stick to the user's saved interests, but models drift, so a
-  // candidate naming anything outside the actual saved list never reaches the user.
+  // cites LIVE_SEARCH while the provider is unconfigured. Interests are a PRIOR, not a filter
+  // (see enrichWithMemoryProfile): a candidate outside the user's saved list is never deleted
+  // here for that reason alone — fact-checking and the Critic are what actually gate quality,
+  // not membership in a fixed list. Only a candidate that falsely claims to BE one of the
+  // user's own interests gets its personal-familiarity bonus withheld below.
   return candidates
     .filter((c) => search.isLive || !c.sources.some((s) => s.sourceType === 'LIVE_SEARCH'))
-    .filter((c) => isKnownInterest(c.worldRef, profile))
     .map((c) => enrichWithMemoryProfile(c, profile));
 }
 
@@ -137,9 +149,10 @@ function normalizeInterestName(value: string): string {
     .trim();
 }
 
-/** Hard gate: worldRef must actually be one of the user's saved interests, not just something
- * the model believes is plausible for that category. Matches loosely (either name contains the
- * other, after normalization) since the model may return "Cristiano Ronaldo" for a saved "Ronaldo". */
+/** A scoring signal only (see enrichWithMemoryProfile), never a filter: whether worldRef actually
+ * matches one of the user's saved interests, not just something the model believes is plausible
+ * for that category. Matches loosely (either name contains the other, after normalization) since
+ * the model may return "Cristiano Ronaldo" for a saved "Ronaldo". */
 function isKnownInterest(worldRef: string, profile: UserMemoryProfile): boolean {
   const target = normalizeInterestName(worldRef);
   if (!target) return false;
@@ -191,14 +204,23 @@ function describeWorlds(profile: UserMemoryProfile): string {
   return parts.join('\n');
 }
 
+/**
+ * Interests as a PRIOR: a familiarity nudge applied on top of whatever the model already scored,
+ * never the boundary of what could be proposed in the first place (that boundary was removed from
+ * the return filter above). A candidate genuinely matching one of the user's saved interests earns
+ * a bonus for it; a GENERAL_KNOWLEDGE candidate — real, but not specific to this student — earns
+ * none, and competes purely on how strong the connection itself is.
+ */
 function enrichWithMemoryProfile(candidate: ConnectionCandidate, profile: UserMemoryProfile): ConnectionCandidate {
   const weightKey = `world:${candidate.worldCategory.toLowerCase()}`;
-  const bonus = profile.weights[weightKey] ?? 0;
+  const categoryBonus = profile.weights[weightKey] ?? 0;
+  const knownInterestBonus =
+    candidate.worldCategory !== 'GENERAL_KNOWLEDGE' && isKnownInterest(candidate.worldRef, profile) ? 15 : 0;
   return {
     ...candidate,
     scoreBreakdown: {
       ...candidate.scoreBreakdown,
-      familiarity: Math.max(0, Math.min(100, candidate.scoreBreakdown.familiarity + bonus))
+      familiarity: Math.max(0, Math.min(100, candidate.scoreBreakdown.familiarity + categoryBonus + knownInterestBonus))
     }
   };
 }

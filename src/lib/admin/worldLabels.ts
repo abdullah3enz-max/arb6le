@@ -9,5 +9,6 @@ export const WORLD_LABEL: Record<string, string> = {
   PEOPLE: '👤 مشاهير',
   CHARACTERS: '🦸 شخصيات',
   BOOKS: '📚 كتب',
-  DAILY_LIFE: '☀️ حياة يومية'
+  DAILY_LIFE: '☀️ حياة يومية',
+  GENERAL_KNOWLEDGE: '🌍 معرفة عامة'
 };

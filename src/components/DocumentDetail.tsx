@@ -17,7 +17,8 @@ const WORLD_EMOJI: Record<string, string> = {
   PEOPLE: '👤',
   CHARACTERS: '🦸',
   BOOKS: '📚',
-  DAILY_LIFE: '☀️'
+  DAILY_LIFE: '☀️',
+  GENERAL_KNOWLEDGE: '🌍'
 };
 
 interface ConnectionRow {

@@ -53,7 +53,10 @@ export type WorldCategory =
   | 'PEOPLE'
   | 'CHARACTERS'
   | 'BOOKS'
-  | 'DAILY_LIFE';
+  | 'DAILY_LIFE'
+  /** A bridge to universal common knowledge, not to one of the student's saved interests —
+   * see the WorldCategory Prisma enum for why this exists. */
+  | 'GENERAL_KNOWLEDGE';
 
 /**
  * The priority ladder (item 6 of the spec) — always attempt the lowest level first; it
@@ -107,6 +110,7 @@ export interface CriticVerdict {
     | 'relationship_real' // the link is invented / coincidental, not a genuine match
     | 'hallucination' // a scene/stat/quote/event was made up
     | 'too_slow' // takes more than ~2 seconds to parse
-    | 'weak_familiarity'; // the reference isn't actually something this user knows
+    | 'weak_familiarity' // the reference isn't actually something this user knows
+    | 'forced_by_preference'; // only "makes sense" because it's the student's favorite thing, not because the link itself is real
   reason: string;
 }

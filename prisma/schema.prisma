@@ -117,6 +117,11 @@ enum WorldCategory {
   CHARACTERS
   BOOKS
   DAILY_LIFE
+  /// A bridge to a fact known to virtually anyone (history, geography, science, a famous
+  /// number, pop culture) rather than to one of the student's own saved interests — never
+  /// offered as a FavoriteWorld choice during onboarding, only ever produced by the Connection
+  /// Finder when it searches beyond the student's declared interests.
+  GENERAL_KNOWLEDGE
 }
 
 model FavoriteWorld {

@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "WorldCategory" ADD VALUE 'GENERAL_KNOWLEDGE';
