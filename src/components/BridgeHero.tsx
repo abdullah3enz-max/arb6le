@@ -62,8 +62,9 @@ export function BridgeHero() {
         <span className="text-xs font-bold text-ink-500">مفهوم صعب</span>
       </div>
       <div className="absolute left-[4%] top-1/2 flex -translate-y-1/2 flex-col items-center gap-2 md:left-[8%]">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-300/40 bg-surface text-2xl shadow-glow md:h-16 md:w-16 md:text-3xl">
-          ❤️
+        <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-300/40 bg-surface text-2xl shadow-glow md:h-16 md:w-16 md:text-3xl">
+          <span className="absolute inset-0 animate-ping rounded-2xl bg-accent-500/20" />
+          <span className="relative">❤️</span>
         </div>
         <span className="text-xs font-bold text-ink-500">شي تحبه</span>
       </div>
