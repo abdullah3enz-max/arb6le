@@ -37,7 +37,14 @@ export async function runPipeline(documentId: string) {
     await setStage(documentId, 'MAPPING_CONCEPTS');
     const cacheKeyPrefix = document.contentHash;
     const extracted = await extractConcepts(pages, { userId: document.userId, cacheKeyPrefix });
-    const relations = await mapConceptRelations(extracted, { userId: document.userId, cacheKeyPrefix });
+    // relatedToJson (below) is display-only metadata — a "related concepts" hint, never load-
+    // bearing for connections/flashcards/quizzes. A malformed model response here (a reasoning
+    // model narrating its answer instead of returning JSON — observed in production) must not
+    // fail the whole document over a feature this cosmetic.
+    const relations = await mapConceptRelations(extracted, { userId: document.userId, cacheKeyPrefix }).catch((error) => {
+      console.error('Concept relation mapping failed (non-fatal):', documentId, error);
+      return [];
+    });
 
     const savedConcepts = await Promise.all(
       extracted.map((c, index) =>
