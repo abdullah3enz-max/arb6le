@@ -17,6 +17,7 @@ interface DocRow {
 export function DocumentList() {
   const [docs, setDocs] = useState<DocRow[] | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
     const res = await fetch('/api/documents');
@@ -53,6 +54,19 @@ export function DocumentList() {
     }
   }
 
+  async function remove(e: React.MouseEvent, id: string, fileName: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`تحذف "${fileName}" نهائيًا؟ بيروح معه كل المفاهيم والروابط والاختبارات المرتبطة فيه.`)) return;
+    setDeleting(id);
+    try {
+      await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+      await load();
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   if (!docs) return <p className="text-sm text-ink-400">جاري التحميل...</p>;
   if (docs.length === 0) return <p className="text-sm text-ink-400">لسه ما رفعت شي. ارفع أول سلايد لك فوق ⬆️</p>;
 
@@ -64,14 +78,25 @@ export function DocumentList() {
           href={`/documents/${doc.id}`}
           className="block rounded-xl2 border border-ink-100 bg-surface p-4 shadow-card transition hover:border-accent-200"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-bold text-ink-900">{doc.fileName}</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-bold text-ink-900">{doc.fileName}</p>
               <p className="text-xs text-ink-400">
                 {doc.fileType} {doc.pageCount ? `· ${doc.pageCount} صفحة` : ''}
               </p>
             </div>
-            <span className="text-xs font-semibold text-ink-400">{new Date(doc.createdAt).toLocaleDateString('ar-SA')}</span>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="text-xs font-semibold text-ink-400">{new Date(doc.createdAt).toLocaleDateString('ar-SA')}</span>
+              <button
+                onClick={(e) => remove(e, doc.id, doc.fileName)}
+                disabled={deleting === doc.id}
+                aria-label="حذف الملف"
+                title="حذف الملف"
+                className="rounded-full p-1.5 text-ink-400 transition hover:bg-accent-50 hover:text-accent-500 disabled:opacity-50"
+              >
+                {deleting === doc.id ? '...' : '🗑️'}
+              </button>
+            </div>
           </div>
           {doc.status !== 'READY' && doc.status !== 'FAILED' && (
             <div className="mt-3 border-t border-ink-100 pt-3">
