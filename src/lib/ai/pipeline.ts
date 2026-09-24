@@ -190,7 +190,29 @@ export async function regenerateQuiz(documentId: string): Promise<void> {
   }
 }
 
+/**
+ * One concept's connection search failing outright (a malformed/unparseable model response, a
+ * transient provider error) must never take the whole document down with it — mapWithConcurrency
+ * has no per-item isolation of its own, and the other concepts' connections/flashcards are real,
+ * already-committed work that a single bad response has no business discarding. Falls back to
+ * the same "no strong connection found" flashcard-only path a normal quality-gate rejection uses.
+ */
 async function findAndSaveBestConnection(
+  concept: { id: string; title: string; summary: string; atomLabel: string },
+  extractedConcept: Parameters<typeof findConnectionCandidates>[0],
+  profile: Parameters<typeof findConnectionCandidates>[1],
+  userId: string,
+  cacheKeyPrefix: string
+) {
+  try {
+    await searchAndSaveConnection(concept, extractedConcept, profile, userId, cacheKeyPrefix);
+  } catch (error) {
+    console.error('Connection search failed for concept (non-fatal):', concept.id, error);
+    await createFlashcard(concept, userId, null);
+  }
+}
+
+async function searchAndSaveConnection(
   concept: { id: string; title: string; summary: string; atomLabel: string },
   extractedConcept: Parameters<typeof findConnectionCandidates>[0],
   profile: Parameters<typeof findConnectionCandidates>[1],
