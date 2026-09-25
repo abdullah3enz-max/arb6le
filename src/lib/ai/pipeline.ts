@@ -2,7 +2,7 @@ import { db } from '@/lib/db';
 import { extractConcepts } from '@/lib/ai/agents/conceptExtractor';
 import { mapConceptRelations } from '@/lib/ai/agents/knowledgeMapper';
 import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
-import { findConnectionCandidates } from '@/lib/ai/agents/connectionFinder';
+import { findConnectionCandidates, normalizeInterestName } from '@/lib/ai/agents/connectionFinder';
 import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
 import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
@@ -75,13 +75,15 @@ export async function runPipeline(documentId: string) {
     // Concurrency is capped, not unlimited: a real provider still has a requests-per-minute
     // ceiling, and firing 20+ concepts at once would just trade "slow" for "rate-limited".
     const concurrency = Math.max(1, Number(process.env.PIPELINE_CONCEPT_CONCURRENCY ?? '4'));
+    const refUsage = new Map<string, number>();
     await mapWithConcurrency(savedConcepts, concurrency, (concept) =>
       findAndSaveBestConnection(
         concept,
         extracted.find((c) => c.title === concept.title)!,
         profile,
         document.userId,
-        cacheKeyPrefix
+        cacheKeyPrefix,
+        refUsage
       )
     );
 
@@ -209,30 +211,39 @@ async function findAndSaveBestConnection(
   extractedConcept: Parameters<typeof findConnectionCandidates>[0],
   profile: Parameters<typeof findConnectionCandidates>[1],
   userId: string,
-  cacheKeyPrefix: string
+  cacheKeyPrefix: string,
+  refUsage: Map<string, number>
 ) {
   try {
-    await searchAndSaveConnection(concept, extractedConcept, profile, userId, cacheKeyPrefix);
+    await searchAndSaveConnection(concept, extractedConcept, profile, userId, cacheKeyPrefix, refUsage);
   } catch (error) {
     console.error('Connection search failed for concept (non-fatal):', concept.id, error);
     await createFlashcard(concept, userId, null);
   }
 }
 
+/** One reference (a player, a show) may carry at most this many approved bridges per document. */
+const MAX_APPROVALS_PER_REF = 2;
+
 async function searchAndSaveConnection(
   concept: { id: string; title: string; summary: string; atomLabel: string },
   extractedConcept: Parameters<typeof findConnectionCandidates>[0],
   profile: Parameters<typeof findConnectionCandidates>[1],
   userId: string,
-  cacheKeyPrefix: string
+  cacheKeyPrefix: string,
+  refUsage: Map<string, number>
 ) {
-  const candidates = await findConnectionCandidates(extractedConcept, profile, { userId, cacheKeyPrefix });
+  const overused = [...refUsage.entries()].filter(([, n]) => n >= MAX_APPROVALS_PER_REF).map(([ref]) => ref);
+  const candidates = await findConnectionCandidates(extractedConcept, profile, {
+    userId,
+    cacheKeyPrefix,
+    excludeWorldRefs: overused
+  });
 
-  // Was slice(0, 3): the Connection Finder now generates 6-10 real candidates per concept
-  // specifically so a weak first few don't waste the rest of them — actually trying most of
-  // what it already produced, instead of throwing 60-70% of it away unseen, is the single
-  // biggest lever for the approval rate that doesn't touch model choice or quality bars at all.
   for (const candidate of candidates.slice(0, 8)) {
+    const refKey = normalizeInterestName(candidate.worldRef);
+    if ((refUsage.get(refKey) ?? 0) >= MAX_APPROVALS_PER_REF) continue;
+
     const factCheck = await factCheckCandidate(candidate);
     if (!factCheck.passed) {
       console.error('Candidate failed fact-check (non-fatal, trying next):', concept.id, candidate.worldRef, factCheck.reason);
@@ -262,6 +273,12 @@ async function searchAndSaveConnection(
       });
       continue; // try the next candidate instead of stopping at the first rejection
     }
+
+    // Re-checked and reserved synchronously (no await in between): other concepts run in
+    // parallel and may have hit the cap for this reference while this one was being critiqued.
+    const used = refUsage.get(refKey) ?? 0;
+    if (used >= MAX_APPROVALS_PER_REF) continue;
+    refUsage.set(refKey, used + 1);
 
     const connection = await db.connection.create({
       data: {
