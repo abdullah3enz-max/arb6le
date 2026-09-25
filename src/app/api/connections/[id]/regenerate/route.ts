@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const filtered = body.differentCategory ? candidates.filter((c) => c.worldCategory !== previous.worldCategory) : candidates;
     const pool = filtered.length > 0 ? filtered : candidates;
 
-    for (const candidate of pool.slice(0, 3)) {
+    for (const candidate of pool.slice(0, 8)) {
       const factCheck = await factCheckCandidate(candidate);
       if (!factCheck.passed) continue;
 

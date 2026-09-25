@@ -228,9 +228,16 @@ async function searchAndSaveConnection(
 ) {
   const candidates = await findConnectionCandidates(extractedConcept, profile, { userId, cacheKeyPrefix });
 
-  for (const candidate of candidates.slice(0, 3)) {
+  // Was slice(0, 3): the Connection Finder now generates 6-10 real candidates per concept
+  // specifically so a weak first few don't waste the rest of them — actually trying most of
+  // what it already produced, instead of throwing 60-70% of it away unseen, is the single
+  // biggest lever for the approval rate that doesn't touch model choice or quality bars at all.
+  for (const candidate of candidates.slice(0, 8)) {
     const factCheck = await factCheckCandidate(candidate);
-    if (!factCheck.passed) continue;
+    if (!factCheck.passed) {
+      console.error('Candidate failed fact-check (non-fatal, trying next):', concept.id, candidate.worldRef, factCheck.reason);
+      continue;
+    }
 
     const critic = await critiqueConnection(candidate, extractedConcept, { userId });
     const gate = runQualityGate(candidate, critic);

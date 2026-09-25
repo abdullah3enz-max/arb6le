@@ -70,7 +70,9 @@ export async function findConnectionCandidates(
     responseFormat: 'json',
     // Reasoning-heavy free models spend a lot of the budget on hidden chain-of-thought before
     // ever writing the JSON — too small a cap here is what truncates the JSON mid-object.
-    maxTokens: 4096,
+    // Bumped for the wider 6-10 candidate target below — more real candidates per call means
+    // more JSON to write, on top of the existing headroom for hidden reasoning-model tokens.
+    maxTokens: 6144,
     messages: [
       {
         role: 'system',
@@ -93,8 +95,10 @@ export async function findConnectionCandidates(
           'جرّب معرفة عامة مشهورة يعرفها أي شخص عادي (تاريخ، جغرافيا، علوم، أرقام مشهورة، ثقافة ' +
           'شعبية) وحطّ لها worldCategory="GENERAL_KNOWLEDGE" بدل فئة من اهتماماته. القاعدة: ' +
           'رابط حقيقي وواضح خارج اهتماماته أفضل بكثير من رابط متكلّف وضعيف داخلها. ' +
-          'ولّد أكثر من مرشح لما يكون ممكن (من اهتماماته ومن GENERAL_KNOWLEDGE معًا) بدل ما تكتفي ' +
-          'بأول شي يخطر لك. ' +
+          'ولّد 6 إلى 10 مرشحين مختلفين فعليًا (مو صياغات مختلفة لنفس الفكرة) — امزج بين اهتماماته ' +
+          'و GENERAL_KNOWLEDGE، وجرّب أكثر من مستوى بسلّم الأولوية وأكثر من زاوية لكل مستوى، بدل ما ' +
+          'تكتفي بأول شي يخطر لك أو ترجع مرشح واحد بس. عدد أكبر من المرشحين الحقيقيين يعطي فرصة أكبر ' +
+          'يعدي واحد منهم فحص الجودة، حتى لو أغلبهم انرفض. ' +
           'إذا اقترحت رابطًا من فئة تخص اهتمامات المستخدم (مو GENERAL_KNOWLEDGE)، استخدم فقط اسمًا ' +
           'مذكورًا حرفيًا بقائمة "عوالم المستخدم" بالأسفل — لا تخترع اسمًا مشابهًا وتّدعي إنه من ' +
           'اهتماماته (مثلًا: المستخدم ذاكر "Messi" بس، فممنوع تقول عن "Ronaldo" إنه اهتمامه — اقترحه ' +
