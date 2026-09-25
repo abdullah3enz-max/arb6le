@@ -76,41 +76,75 @@ export interface ConnectionSourceDraft {
   evidenceSnippet: string;
 }
 
-/**
- * Internal scoring only (item 8) — never shown to the user, used purely to pick the best
- * candidate and to gate what's shown at all. confusionRisk is inverted (higher = worse) and
- * subtracted, not averaged in with the rest.
- */
-export interface AssociationScoreBreakdown {
-  directness: number; // is this a 1:1 match, or does it need explaining?
-  familiarity: number; // does the user actually know this reference well?
-  simplicity: number; // can it be understood in under ~2 seconds?
-  memorability: number; // will it actually stick?
-  relevance: number; // does the bridge serve the real fact, not just sound clever?
-  confusionRisk: number; // could this be misread as a different fact? (higher = worse)
+/** A memorable element of a fact that a bridge can hang on — the search starts from these. */
+export type AnchorKind =
+  | 'NUMBER'
+  | 'RANGE'
+  | 'MEASUREMENT'
+  | 'TERM'
+  | 'NAME'
+  | 'SEQUENCE'
+  | 'PROPERTY'
+  | 'RELATION'
+  | 'VISUAL';
+
+export interface Anchor {
+  text: string;
+  kind: AnchorKind;
+  /** 0-1: how much this element is worth memorizing and bridging ("approximately" ≈ 0). */
+  relevance: number;
 }
 
-export interface ConnectionCandidate {
-  associationLevel: AssociationLevel;
+export type BridgeConnectionType =
+  | 'DIRECT'
+  | 'NUMERIC'
+  | 'MEASUREMENT'
+  | 'PHONETIC'
+  | 'SEMANTIC'
+  | 'STRUCTURAL'
+  | 'VISUAL'
+  | 'NARRATIVE'
+  | 'POP_CULTURE'
+  | 'SPORTS'
+  | 'EVERYDAY';
+
+/** One discovered bridge, always anchored on an element of the fact — never on the student. */
+export interface BridgeCandidate {
+  id: string;
+  anchor: string;
+  connectionType: BridgeConnectionType;
   worldCategory: WorldCategory;
-  worldRef: string; // "Cristiano Ronaldo"
+  worldRef: string;
   atomEmoji: string;
-  atomLabel: string; // "7 mg" — the fact, verbatim, never altered
-  bridgeLine: string; // the ENTIRE mnemonic: "Ronaldo = 7" — nothing longer
-  whyOneLiner: string; // one or two short sentences max, shown only behind "ليش؟"
-  claimType: ClaimType;
-  sources: ConnectionSourceDraft[];
-  scoreBreakdown: AssociationScoreBreakdown;
+  bridgeLine: string;
+  whyOneLiner: string;
+  /** The external, independently checkable fact the bridge relies on. */
+  evidence: string;
+  /** Discovery's own certainty that `evidence` is literally true (0-1). */
+  confidence: number;
+  /** Logical steps between the anchor and the reference (1 = direct). */
+  relationDistance: number;
 }
 
-export interface CriticVerdict {
-  verdict: 'APPROVE' | 'REJECT';
-  failedCheck?:
-    | 'factual_accuracy' // the real-world fact used (Ronaldo wears #7) is wrong
-    | 'relationship_real' // the link is invented / coincidental, not a genuine match
-    | 'hallucination' // a scene/stat/quote/event was made up
-    | 'too_slow' // takes more than ~2 seconds to parse
-    | 'weak_familiarity' // the reference isn't actually something this user knows
-    | 'forced_by_preference'; // only "makes sense" because it's the student's favorite thing, not because the link itself is real
+export type Forcedness = 'NATURAL' | 'WEAK' | 'FORCED';
+
+/** The independent verifier's judgment of one candidate. Never sees the student's interests. */
+export interface BridgeVerdict {
+  id: string;
+  factTrue: boolean;
+  linkTrue: boolean;
+  forcedness: Forcedness;
+  relationDistance: number;
+  coversMemoryTarget: boolean;
+  scores: { connection: number; simplicity: number; memorability: number; evidence: number };
   reason: string;
+}
+
+export interface ScoredBridge {
+  candidate: BridgeCandidate;
+  verdict: BridgeVerdict;
+  baseScore: number;
+  /** 0-5 at most, added only after the quality gate — never rescues a weak bridge. */
+  personalization: number;
+  score: number;
 }

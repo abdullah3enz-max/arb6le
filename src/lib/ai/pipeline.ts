@@ -2,13 +2,11 @@ import { db } from '@/lib/db';
 import { extractConcepts } from '@/lib/ai/agents/conceptExtractor';
 import { mapConceptRelations } from '@/lib/ai/agents/knowledgeMapper';
 import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
-import { findConnectionCandidates, normalizeInterestName } from '@/lib/ai/agents/connectionFinder';
-import { factCheckCandidate } from '@/lib/ai/agents/factChecker';
-import { critiqueConnection } from '@/lib/ai/agents/connectionCritic';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
-import { runQualityGate } from '@/lib/ai/qualityGate';
+import { connectionRowData, findBridges, sourceRowData } from '@/lib/ai/bridgeEngine';
+import { normalizeRef } from '@/lib/ai/bridgeScoring';
 import { buildFlashcardBack } from '@/lib/study/flashcardText';
-import type { ExtractedConcept } from '@/lib/ai/types';
+import type { ExtractedConcept, UserMemoryProfile } from '@/lib/ai/types';
 
 export type PipelineStage =
   | 'MAPPING_CONCEPTS'
@@ -66,26 +64,7 @@ export async function runPipeline(documentId: string) {
     );
 
     await setStage(documentId, 'FINDING_CONNECTIONS');
-    const profile = await retrieveUserMemoryProfile(document.userId);
-
-    await setStage(documentId, 'FACT_CHECKING');
-    // Each concept's connection search is fully independent (its own LLM calls, its own
-    // Connection/Flashcard rows, no shared cache key — see connectionFinder/connectionCritic,
-    // which never pass a cacheKey at all) — so this no longer processes them one at a time.
-    // Concurrency is capped, not unlimited: a real provider still has a requests-per-minute
-    // ceiling, and firing 20+ concepts at once would just trade "slow" for "rate-limited".
-    const concurrency = Math.max(1, Number(process.env.PIPELINE_CONCEPT_CONCURRENCY ?? '4'));
-    const refUsage = new Map<string, number>();
-    await mapWithConcurrency(savedConcepts, concurrency, (concept) =>
-      findAndSaveBestConnection(
-        concept,
-        extracted.find((c) => c.title === concept.title)!,
-        profile,
-        document.userId,
-        cacheKeyPrefix,
-        refUsage
-      )
-    );
+    await connectAllConcepts(savedConcepts, extracted, document.userId);
 
     await setStage(documentId, 'GENERATING');
     // Quiz generation is best-effort: the concepts and connections above are the core value
@@ -199,6 +178,8 @@ export async function regenerateQuiz(documentId: string): Promise<void> {
   }
 }
 
+type SavedConcept = { id: string; title: string; summary: string; atomLabel: string };
+
 /**
  * One concept's connection search failing outright (a malformed/unparseable model response, a
  * transient provider error) must never take the whole document down with it — mapWithConcurrency
@@ -207,111 +188,120 @@ export async function regenerateQuiz(documentId: string): Promise<void> {
  * the same "no strong connection found" flashcard-only path a normal quality-gate rejection uses.
  */
 async function findAndSaveBestConnection(
-  concept: { id: string; title: string; summary: string; atomLabel: string },
-  extractedConcept: Parameters<typeof findConnectionCandidates>[0],
-  profile: Parameters<typeof findConnectionCandidates>[1],
+  concept: SavedConcept,
+  extractedConcept: ExtractedConcept,
+  profile: UserMemoryProfile,
   userId: string,
-  cacheKeyPrefix: string,
   refUsage: Map<string, number>
 ) {
   try {
-    await searchAndSaveConnection(concept, extractedConcept, profile, userId, cacheKeyPrefix, refUsage);
+    await searchAndSaveConnection(concept, extractedConcept, profile, userId, refUsage);
   } catch (error) {
     console.error('Connection search failed for concept (non-fatal):', concept.id, error);
     await createFlashcard(concept, userId, null);
   }
 }
 
-/** One reference (a player, a show) may carry at most this many approved bridges per document. */
+/** One reference may carry at most this many approved bridges per document — no monopolies. */
 const MAX_APPROVALS_PER_REF = 2;
+/** Rejected candidates kept per concept for analysis (the debug trace has the full list). */
+const STORED_REJECTIONS_PER_CONCEPT = 8;
 
 async function searchAndSaveConnection(
-  concept: { id: string; title: string; summary: string; atomLabel: string },
-  extractedConcept: Parameters<typeof findConnectionCandidates>[0],
-  profile: Parameters<typeof findConnectionCandidates>[1],
+  concept: SavedConcept,
+  extractedConcept: ExtractedConcept,
+  profile: UserMemoryProfile,
   userId: string,
-  cacheKeyPrefix: string,
   refUsage: Map<string, number>
 ) {
   const overused = [...refUsage.entries()].filter(([, n]) => n >= MAX_APPROVALS_PER_REF).map(([ref]) => ref);
-  const candidates = await findConnectionCandidates(extractedConcept, profile, {
-    userId,
-    cacheKeyPrefix,
-    excludeWorldRefs: overused
-  });
+  const result = await findBridges(extractedConcept, profile, { userId, excludeRefs: overused });
 
-  for (const candidate of candidates.slice(0, 8)) {
-    const refKey = normalizeInterestName(candidate.worldRef);
-    if ((refUsage.get(refKey) ?? 0) >= MAX_APPROVALS_PER_REF) continue;
+  if (result.rejected.length) {
+    await db.connection.createMany({
+      data: result.rejected.slice(0, STORED_REJECTIONS_PER_CONCEPT).map((r) =>
+        connectionRowData(concept.id, concept.atomLabel, r.candidate, {
+          status: r.baseScore === null ? 'REJECTED' : 'BELOW_THRESHOLD',
+          score: r.baseScore ?? 0,
+          memoryTarget: result.memoryTarget,
+          rejectionReason: r.reason
+        })
+      )
+    });
+  }
 
-    const factCheck = await factCheckCandidate(candidate);
-    if (!factCheck.passed) {
-      console.error('Candidate failed fact-check (non-fatal, trying next):', concept.id, candidate.worldRef, factCheck.reason);
-      continue;
-    }
-
-    const critic = await critiqueConnection(candidate, extractedConcept, { userId });
-    const gate = runQualityGate(candidate, critic);
-
-    if (!gate.approved) {
-      await db.connection.create({
-        data: {
-          conceptId: concept.id,
-          associationLevel: candidate.associationLevel,
-          worldCategory: candidate.worldCategory,
-          worldRef: candidate.worldRef,
-          atomEmoji: candidate.atomEmoji,
-          atomLabel: candidate.atomLabel,
-          bridgeLine: candidate.bridgeLine,
-          whyOneLiner: candidate.whyOneLiner,
-          claimType: candidate.claimType,
-          score: gate.score,
-          scoreBreakdown: candidate.scoreBreakdown as unknown as object,
-          status: gate.status,
-          rejectionReason: gate.rejectionReason
-        }
-      });
-      continue; // try the next candidate instead of stopping at the first rejection
-    }
-
-    // Re-checked and reserved synchronously (no await in between): other concepts run in
-    // parallel and may have hit the cap for this reference while this one was being critiqued.
+  for (const scored of result.accepted) {
+    // Checked and reserved synchronously (no await in between): other concepts run in parallel
+    // and may have taken this reference's last slot while this one was being verified.
+    const refKey = normalizeRef(scored.candidate.worldRef);
     const used = refUsage.get(refKey) ?? 0;
     if (used >= MAX_APPROVALS_PER_REF) continue;
     refUsage.set(refKey, used + 1);
 
     const connection = await db.connection.create({
       data: {
-        conceptId: concept.id,
-        associationLevel: candidate.associationLevel,
-        worldCategory: candidate.worldCategory,
-        worldRef: candidate.worldRef,
-        atomEmoji: candidate.atomEmoji,
-        atomLabel: candidate.atomLabel,
-        bridgeLine: candidate.bridgeLine,
-        whyOneLiner: candidate.whyOneLiner,
-        claimType: candidate.claimType,
-        score: gate.score,
-        scoreBreakdown: candidate.scoreBreakdown as unknown as object,
-        status: 'APPROVED',
-        sources: {
-          create: candidate.sources.map((s) => ({
-            sourceType: s.sourceType,
-            url: s.url,
-            title: s.title,
-            confidence: s.confidence,
-            evidenceSnippet: s.evidenceSnippet
-          }))
-        }
+        ...connectionRowData(concept.id, concept.atomLabel, scored.candidate, {
+          status: 'APPROVED',
+          score: scored.score,
+          memoryTarget: result.memoryTarget,
+          scored
+        }),
+        sources: { create: [sourceRowData(scored.candidate)] }
       }
     });
     await createFlashcard(concept, userId, { id: connection.id, atomEmoji: connection.atomEmoji, bridgeLine: connection.bridgeLine });
-    return; // one strong bridge per fact (item 14) — quality over quantity
+    return; // one bridge per fact — the best one
   }
-  // No candidate survived fact-check/critic/threshold: this concept explicitly gets no
-  // connection (the UI renders this as "ما لقيت ربط قوي وصادق..."), but it still becomes a
-  // flashcard — a student needs to memorize the fact itself even without a mnemonic bridge.
+  // Nothing survived verification even after an expansion round: no bridge, but the fact still
+  // becomes a flashcard — a student needs to memorize it either way.
   await createFlashcard(concept, userId, null);
+}
+
+/** Runs the connection stage for every saved concept of a document (shared by first processing
+ * and by rebuildConnections). */
+async function connectAllConcepts(
+  savedConcepts: (SavedConcept & { title: string })[],
+  extracted: ExtractedConcept[],
+  userId: string
+) {
+  const profile = await retrieveUserMemoryProfile(userId);
+  // Concurrency is capped, not unlimited: a real provider still has a requests-per-minute ceiling.
+  const concurrency = Math.max(1, Number(process.env.PIPELINE_CONCEPT_CONCURRENCY ?? '4'));
+  const refUsage = new Map<string, number>();
+  await mapWithConcurrency(savedConcepts, concurrency, (concept) =>
+    findAndSaveBestConnection(concept, extracted.find((c) => c.title === concept.title)!, profile, userId, refUsage)
+  );
+}
+
+/**
+ * Re-runs ONLY the connection stage on an already-processed document, from its saved concepts —
+ * for comparing engines/models on the same real file without re-uploading it. Clears the old
+ * connections and their flashcards first so nothing is duplicated; the quiz is left untouched.
+ */
+export async function rebuildConnections(documentId: string): Promise<void> {
+  const document = await db.document.findUniqueOrThrow({ where: { id: documentId } });
+  const concepts = await db.concept.findMany({ where: { documentId }, orderBy: { orderIndex: 'asc' } });
+  if (concepts.length === 0) throw new Error('ما فيه مفاهيم مستخرجة لهذا الملف.');
+
+  await setStage(documentId, 'FINDING_CONNECTIONS');
+  try {
+    const conceptIds = concepts.map((c) => c.id);
+    await db.flashcard.deleteMany({ where: { conceptId: { in: conceptIds } } });
+    await db.connection.deleteMany({ where: { conceptId: { in: conceptIds } } });
+
+    const extracted: ExtractedConcept[] = concepts.map((c) => ({
+      title: c.title,
+      summary: c.summary,
+      importance: c.importance,
+      conceptType: c.conceptType,
+      sourcePageNumbers: c.sourcePageIds.map(Number),
+      atomLabel: c.atomLabel,
+      atomEmoji: c.atomEmoji
+    }));
+    await connectAllConcepts(concepts, extracted, document.userId);
+  } finally {
+    await setStage(documentId, 'READY');
+  }
 }
 
 /** Every concept becomes a flashcard automatically the moment its processing finishes — Study

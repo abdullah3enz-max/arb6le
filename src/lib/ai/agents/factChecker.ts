@@ -1,55 +1,42 @@
 import { getSearchProvider } from '@/lib/ai/providers/search';
-import type { ConnectionCandidate, ConnectionSourceDraft } from '@/lib/ai/types';
+import type { BridgeCandidate } from '@/lib/ai/types';
 
-export interface FactCheckResult {
-  candidate: ConnectionCandidate;
+/** Discovery-side floor only — deliberately lenient; the verifier is where strictness lives. */
+const MIN_DISCOVERY_CONFIDENCE = 0.6;
+
+export interface EvidenceCheck {
   passed: boolean;
   reason: string;
 }
 
 /**
- * STEP 10: Fact-checking. For LIVE_SEARCH-sourced candidates, this re-verifies against a real
- * search call rather than trusting the Connection Finder's self-reported confidence — the
- * Finder can be wrong about what it found, this step is the independent check.
- * For KNOWLEDGE_BASE candidates in this scaffold, we enforce a minimum evidence bar
- * (non-empty evidenceSnippet + confidence) since a full curated KB isn't wired up yet —
- * see docs/ARCHITECTURE.md §10.
+ * Cheap, deterministic pre-filter before the (paid) verifier call: a candidate with no stated
+ * evidence, or whose own author isn't confident in it, never reaches verification. When a live
+ * search provider is configured, the evidence is also cross-checked against real results.
  */
-export async function factCheckCandidate(candidate: ConnectionCandidate): Promise<FactCheckResult> {
+export async function checkEvidence(candidate: BridgeCandidate): Promise<EvidenceCheck> {
+  if (!candidate.evidence) {
+    return { passed: false, reason: 'بدون دليل قابل للتحقق.' };
+  }
+  if (candidate.confidence < MIN_DISCOVERY_CONFIDENCE) {
+    return { passed: false, reason: `ثقة منخفضة بالدليل (${candidate.confidence}).` };
+  }
+
   const search = getSearchProvider();
-
-  for (const source of candidate.sources) {
-    if (source.sourceType === 'LIVE_SEARCH') {
-      if (!search.isLive) {
-        return { candidate, passed: false, reason: 'LIVE_SEARCH source but no search provider configured.' };
-      }
-      const verified = await verifyAgainstLiveSearch(source, candidate.worldRef);
-      if (!verified) {
-        return { candidate, passed: false, reason: `Could not verify "${source.title ?? source.evidenceSnippet}" via live search.` };
-      }
-    }
-
-    if (source.sourceType === 'KNOWLEDGE_BASE' && (source.confidence < 0.7 || !source.evidenceSnippet)) {
-      return { candidate, passed: false, reason: 'Knowledge-base source below minimum confidence/evidence bar.' };
-    }
+  if (search.isLive && !(await verifyAgainstLiveSearch(candidate.evidence, candidate.worldRef))) {
+    return { passed: false, reason: 'ما قدرنا نأكد الدليل من البحث المباشر.' };
   }
 
-  if (candidate.sources.length === 0) {
-    return { candidate, passed: false, reason: 'No sources attached — cannot ground this connection.' };
-  }
-
-  return { candidate, passed: true, reason: 'All sources verified.' };
+  return { passed: true, reason: 'ok' };
 }
 
-async function verifyAgainstLiveSearch(source: ConnectionSourceDraft, worldRef: string): Promise<boolean> {
+async function verifyAgainstLiveSearch(evidence: string, worldRef: string): Promise<boolean> {
   const search = getSearchProvider();
-  const query = `${worldRef} ${source.title ?? source.evidenceSnippet}`.slice(0, 200);
-  const results = await search.search(query);
-  const snippetWords = source.evidenceSnippet.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-
+  const results = await search.search(`${worldRef} ${evidence}`.slice(0, 200));
+  const words = evidence.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
   return results.some((r) => {
     const haystack = `${r.title} ${r.snippet}`.toLowerCase();
-    const overlap = snippetWords.filter((w) => haystack.includes(w)).length;
-    return overlap >= Math.max(2, Math.floor(snippetWords.length * 0.3));
+    const overlap = words.filter((w) => haystack.includes(w)).length;
+    return overlap >= Math.max(2, Math.floor(words.length * 0.3));
   });
 }

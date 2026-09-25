@@ -18,12 +18,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const concepts = await db.concept.findMany({
       where: { documentId: id },
       orderBy: { orderIndex: 'asc' },
-      include: { connections: { where: { status: 'APPROVED' }, include: { sources: true } } }
+      // Newest first: the page shows connections[0], so a successful 🔄 regeneration must win
+      // over the connection it replaced.
+      include: {
+        connections: { where: { status: 'APPROVED' }, orderBy: { createdAt: 'desc' }, include: { sources: true } }
+      }
     });
 
     const quizzes = await db.quiz.findMany({ where: { documentId: id }, include: { questions: true } });
 
-    return NextResponse.json({ document, concepts, quizzes });
+    return NextResponse.json({ document, concepts, quizzes, canRebuild: user.role !== 'STUDENT' });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: 'يجب تسجيل الدخول.' }, { status: 401 });
     return NextResponse.json({ error: 'فشل جلب الملف.' }, { status: 500 });

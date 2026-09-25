@@ -51,6 +51,7 @@ interface DocState {
   document: { id: string; fileName: string; status: string; errorMessage: string | null };
   concepts: ConceptRow[];
   quizzes: { id: string; title: string; questions: { id: string }[] }[];
+  canRebuild?: boolean;
 }
 
 function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionCardData {
@@ -74,6 +75,9 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
   const [regeneratingQuiz, setRegeneratingQuiz] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
+  // Bumped to restart the status-polling effect after it stopped at READY (e.g. a rebuild).
+  const [pollKey, setPollKey] = useState(0);
   // Every one of these buttons used to fire its fetch and show nothing back — a click that
   // silently succeeded (LOVE) or silently found no better alternative (regenerate) looked
   // identical to a broken button. This is the per-card message that closes that gap.
@@ -99,7 +103,7 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
       });
     }, 3000);
     return () => clearInterval(interval);
-  }, [load]);
+  }, [load, pollKey]);
 
   function setMessage(connectionId: string, message: string | null) {
     setActionMessage((current) => {
@@ -162,6 +166,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     }
   }
 
+  async function rebuild() {
+    if (!confirm('تعيد بناء كل روابط هالملف بالمحرك الحالي؟ الروابط القديمة بتنحذف (الاختبار يبقى).')) return;
+    setRebuildError(null);
+    const res = await fetch(`/api/documents/${documentId}/rebuild-connections`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      setRebuildError(data?.error ?? 'فشلت إعادة بناء الروابط.');
+      return;
+    }
+    setState((current) =>
+      current ? { ...current, document: { ...current.document, status: 'FINDING_CONNECTIONS' } } : current
+    );
+    setPollKey((k) => k + 1);
+  }
+
   async function removeDocument() {
     if (!confirm('تحذف هذا الملف نهائيًا؟ بيروح معه كل المفاهيم والروابط والاختبارات المرتبطة فيه.')) return;
     setDeleting(true);
@@ -220,14 +239,25 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
       <div>
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl font-extrabold text-ink-900">{document.fileName}</h1>
-          <button
-            onClick={removeDocument}
-            disabled={deleting}
-            className="shrink-0 rounded-full border border-ink-100 px-3 py-1.5 text-xs font-bold text-ink-500 transition hover:border-accent-300/40 hover:text-accent-500 disabled:opacity-50"
-          >
-            🗑️ احذف الملف
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {state.canRebuild && (
+              <button
+                onClick={rebuild}
+                className="rounded-full border border-ink-100 px-3 py-1.5 text-xs font-bold text-ink-500 transition hover:border-accent-300/40 hover:text-accent-500"
+              >
+                🔁 أعد بناء الروابط
+              </button>
+            )}
+            <button
+              onClick={removeDocument}
+              disabled={deleting}
+              className="rounded-full border border-ink-100 px-3 py-1.5 text-xs font-bold text-ink-500 transition hover:border-accent-300/40 hover:text-accent-500 disabled:opacity-50"
+            >
+              🗑️ احذف الملف
+            </button>
+          </div>
         </div>
+        {rebuildError && <p className="mt-2 text-xs font-semibold text-accent-600">{rebuildError}</p>}
         <p className="mt-1 text-ink-500">
           وجدنا {concepts.length} معلومة مهمة، وسوّينا {withConnection.length} رابط ذاكرة شخصي لك.
         </p>
