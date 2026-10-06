@@ -75,3 +75,18 @@ export function personalizationBonus(candidate: BridgeCandidate, profile: UserMe
   if (feedback < 0) bonus -= 3;
   return Math.max(0, Math.min(MAX_PERSONALIZATION_BONUS, bonus));
 }
+
+/** Series/anime and sound-alike bridges are the product's signature — preferred, never forced. */
+export const MAX_DOMAIN_BONUS = 5;
+const SCREEN_WORLDS = new Set(['SERIES', 'ANIME', 'CHARACTERS', 'MOVIES']);
+
+/**
+ * 0-5 points, same rule as personalization: added only after the bridge passed the threshold on
+ * its own, so it decides between two good bridges and can never rescue a weak one.
+ */
+export function domainBonus(candidate: BridgeCandidate): number {
+  let bonus = 0;
+  if (SCREEN_WORLDS.has(candidate.worldCategory)) bonus += 3;
+  if (candidate.connectionType === 'PHONETIC') bonus += 2;
+  return Math.min(MAX_DOMAIN_BONUS, bonus);
+}

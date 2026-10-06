@@ -12,6 +12,8 @@ export interface ConnectionCardData {
   bridgeLine: string; // the entire mnemonic: "Ronaldo = 7"
   whyOneLiner: string; // shown only on the back of the card
   claimType: 'FACT' | 'ANALOGY' | 'INTERPRETATION';
+  /** Small tag naming the kind of bridge, e.g. "🔊 تشابه صوتي". */
+  badge?: string;
 }
 
 /**
@@ -54,6 +56,11 @@ export function ConnectionCard({
             style={{ backfaceVisibility: 'hidden' }}
           >
             <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 py-6 text-center">
+              {data.badge && (
+                <span className="rounded-full bg-accent-50 px-3 py-0.5 text-xs font-bold text-accent-600">
+                  {data.badge}
+                </span>
+              )}
               <p className="text-sm text-ink-500">{data.conceptTitle}</p>
 
               <div className="flex items-center justify-center gap-2 text-lg font-semibold text-ink-700">

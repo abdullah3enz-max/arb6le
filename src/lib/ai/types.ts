@@ -124,6 +124,14 @@ export interface BridgeCandidate {
   confidence: number;
   /** Logical steps between the anchor and the reference (1 = direct). */
   relationDistance: number;
+  /** PHONETIC bridges only: the term, how it sounds in Arabic letters, and the reference's matching sound. */
+  phonetic?: PhoneticMatch;
+}
+
+export interface PhoneticMatch {
+  term: string;
+  soundsLike: string;
+  matchedSound: string;
 }
 
 export type Forcedness = 'NATURAL' | 'WEAK' | 'FORCED';
@@ -146,5 +154,7 @@ export interface ScoredBridge {
   baseScore: number;
   /** 0-5 at most, added only after the quality gate — never rescues a weak bridge. */
   personalization: number;
+  /** 0-5 at most: product-level preference for series/anime and sound-alike bridges, same rule as personalization. */
+  domainBonus: number;
   score: number;
 }

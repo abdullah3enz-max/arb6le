@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { baseScore, BRIDGE_SCORE_THRESHOLD, gateVerdict, personalizationBonus } from './bridgeScoring';
+import { baseScore, BRIDGE_SCORE_THRESHOLD, domainBonus, gateVerdict, personalizationBonus } from './bridgeScoring';
 import type { BridgeCandidate, BridgeVerdict, UserMemoryProfile } from './types';
 
 function verdict(overrides: Partial<BridgeVerdict> = {}): BridgeVerdict {
@@ -86,5 +86,14 @@ describe('personalizationBonus', () => {
     const weak = baseScore(verdict({ scores: { connection: 50, simplicity: 60, memorability: 50, evidence: 60 } }));
     expect(weak).toBeLessThan(BRIDGE_SCORE_THRESHOLD);
     expect(weak + personalizationBonus(candidate(), profile)).toBeLessThan(BRIDGE_SCORE_THRESHOLD);
+  });
+});
+
+describe('domainBonus', () => {
+  it('prefers series/anime and sound-alike bridges by at most 5 points', () => {
+    expect(domainBonus(candidate({ worldCategory: 'ANIME', connectionType: 'PHONETIC' }))).toBe(5);
+    expect(domainBonus(candidate({ worldCategory: 'SERIES', connectionType: 'NUMERIC' }))).toBe(3);
+    expect(domainBonus(candidate({ worldCategory: 'DAILY_LIFE', connectionType: 'PHONETIC' }))).toBe(2);
+    expect(domainBonus(candidate({ worldCategory: 'GENERAL_KNOWLEDGE', connectionType: 'NUMERIC' }))).toBe(0);
   });
 });

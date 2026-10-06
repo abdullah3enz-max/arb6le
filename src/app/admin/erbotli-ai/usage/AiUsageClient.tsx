@@ -43,6 +43,7 @@ interface AiUsageData {
 const AGENT_LABEL: Record<string, string> = {
   concept_extractor: '🧠 استخراج المفاهيم',
   connection_finder: '🔗 البحث عن الروابط',
+  sound_screen_finder: '🔊 تشابه صوتي ومسلسلات وأنمي',
   knowledge_mapper: '🧩 ربط المفاهيم ببعضها',
   connection_critic: '🕵️ نقد الروابط',
   quiz_generator: '📝 توليد الاختبارات'

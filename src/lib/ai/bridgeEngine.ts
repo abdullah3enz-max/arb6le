@@ -2,7 +2,15 @@ import { extractNumericAnchors } from './anchors';
 import { discoverBridges } from './agents/connectionFinder';
 import { verifyBridges } from './agents/connectionCritic';
 import { checkEvidence } from './agents/factChecker';
-import { baseScore, BRIDGE_SCORE_THRESHOLD, gateVerdict, normalizeRef, personalizationBonus } from './bridgeScoring';
+import { discoverSoundScreenBridges } from './agents/soundScreenFinder';
+import {
+  baseScore,
+  BRIDGE_SCORE_THRESHOLD,
+  domainBonus,
+  gateVerdict,
+  normalizeRef,
+  personalizationBonus
+} from './bridgeScoring';
 import type {
   Anchor,
   AssociationLevel,
@@ -15,9 +23,11 @@ import type {
 } from './types';
 
 /*
- * CONCEPT → ANCHOR → DISCOVERY → VERIFICATION → RANKING (+≤5% personalization)
+ * CONCEPT → ANCHOR → DISCOVERY → VERIFICATION → RANKING (+≤5 personalization, +≤5 domain)
  *
- * WIDE discovery (15-20 candidates, any domain, anchored on the fact) and STRICT verification
+ * Discovery runs two passes side by side: the general one (15-20 candidates, any domain) and a
+ * sound & screen one (sound-alike terms and series/anime bridges). Both are anchored on the fact,
+ * and both feed the same STRICT verification
  * (independent, temperature 0, hard gates on truth/link/forcedness/distance). If nothing survives,
  * one expansion round searches other anchors/types/domains, told why round one failed. Only then
  * does the concept honestly end with no bridge.
@@ -25,7 +35,7 @@ import type {
 
 const MAX_ROUNDS = 2;
 /** Candidates sent to the verifier per round — the most diverse slice of what discovery found. */
-const VERIFY_BATCH = 12;
+const VERIFY_BATCH = 16;
 
 export interface RejectedBridge {
   candidate: BridgeCandidate;
@@ -56,6 +66,7 @@ export async function findBridges(
 ): Promise<BridgeSearchResult> {
   const detectedAnchors = extractNumericAnchors(`${concept.atomLabel}\n${concept.title}\n${concept.summary}`);
   const seenRefs = new Set((opts.excludeRefs ?? []).map(normalizeRef));
+  const excludedTypes = new Set(opts.excludeTypes ?? []);
   const accepted: ScoredBridge[] = [];
   const rejected: RejectedBridge[] = [];
   let memoryTarget = concept.atomLabel;
@@ -66,35 +77,54 @@ export async function findBridges(
 
   while (round < MAX_ROUNDS && accepted.length === 0) {
     round++;
-    const discovery = await discoverBridges(concept, {
-      userId: opts.userId,
-      detectedAnchors,
-      excludeRefs: [...seenRefs],
-      excludeTypes: opts.excludeTypes ?? [],
-      round,
-      priorRejections
-    });
-    if (round === 1) {
-      memoryTarget = discovery.memoryTarget;
-      anchors = discovery.anchors.length ? discovery.anchors : detectedAnchors;
+    const excludeRefs = [...seenRefs];
+    // Either pass may fail (bad JSON, timeout) without losing the other's candidates.
+    const [core, screen] = await Promise.allSettled([
+      discoverBridges(concept, {
+        userId: opts.userId,
+        detectedAnchors,
+        excludeRefs,
+        excludeTypes: opts.excludeTypes ?? [],
+        round,
+        priorRejections
+      }),
+      discoverSoundScreenBridges(concept, {
+        userId: opts.userId,
+        memoryTarget,
+        detectedAnchors,
+        excludeRefs,
+        round,
+        priorRejections
+      })
+    ]);
+    if (core.status === 'rejected' && screen.status === 'rejected') throw core.reason;
+
+    if (core.status === 'fulfilled' && round === 1) {
+      memoryTarget = core.value.memoryTarget;
+      anchors = core.value.anchors.length ? core.value.anchors : detectedAnchors;
     }
-    discovered += discovery.candidates.length;
+    const coreCandidates = core.status === 'fulfilled' ? core.value.candidates : [];
+    const screenCandidates = screen.status === 'fulfilled' ? screen.value : [];
+    discovered += coreCandidates.length + screenCandidates.length;
 
-    const fresh = discovery.candidates.filter((c) => {
-      const key = normalizeRef(c.worldRef);
-      if (!key || seenRefs.has(key)) return false;
-      seenRefs.add(key);
-      return true;
-    });
+    const [corePool, screenPool] = await Promise.all(
+      [coreCandidates, screenCandidates].map(async (list) => {
+        const pool: BridgeCandidate[] = [];
+        for (const c of list) {
+          if (excludedTypes.has(c.connectionType)) continue;
+          const key = normalizeRef(c.worldRef);
+          if (!key || seenRefs.has(key)) continue;
+          seenRefs.add(key);
+          const check = await checkEvidence(c);
+          if (check.passed) pool.push(c);
+          else rejected.push({ candidate: c, reason: check.reason, baseScore: null });
+        }
+        return pool;
+      })
+    );
 
-    const pool: BridgeCandidate[] = [];
-    for (const c of fresh) {
-      const check = await checkEvidence(c);
-      if (check.passed) pool.push(c);
-      else rejected.push({ candidate: c, reason: check.reason, baseScore: null });
-    }
-
-    const batch = diversify(pool).slice(0, VERIFY_BATCH);
+    // Alternate the two passes so sound-alike and series/anime candidates always reach the verifier.
+    const batch = interleave(diversify(screenPool!), diversify(corePool!)).slice(0, VERIFY_BATCH);
     const verdicts = await verifyBridges(concept, memoryTarget, batch, { userId: opts.userId });
 
     const roundRejections: string[] = [];
@@ -114,7 +144,15 @@ export async function findBridges(
         continue;
       }
       const personalization = personalizationBonus(c, profile);
-      accepted.push({ candidate: c, verdict, baseScore: base, personalization, score: base + personalization });
+      const domain = domainBonus(c);
+      accepted.push({
+        candidate: c,
+        verdict,
+        baseScore: base,
+        personalization,
+        domainBonus: domain,
+        score: base + personalization + domain
+      });
     }
     priorRejections = roundRejections.slice(0, 10);
   }
@@ -132,12 +170,26 @@ export async function findBridges(
         anchors,
         rounds: round,
         discovered,
-        accepted: accepted.map((a) => ({ bridge: a.candidate.bridgeLine, base: a.baseScore, bonus: a.personalization })),
+        accepted: accepted.map((a) => ({
+          bridge: a.candidate.bridgeLine,
+          base: a.baseScore,
+          bonus: a.personalization,
+          domain: a.domainBonus
+        })),
         rejected: rejected.map((r) => ({ bridge: r.candidate.bridgeLine, reason: r.reason }))
       })
     );
   }
   return result;
+}
+
+export function interleave<T>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (i < a.length) out.push(a[i]!);
+    if (i < b.length) out.push(b[i]!);
+  }
+  return out;
 }
 
 /**
@@ -206,7 +258,7 @@ export function connectionRowData(
     claimType,
     score: meta.score,
     scoreBreakdown: {
-      engine: 'anchor-first-v1',
+      engine: 'anchor-first-v2',
       anchor: candidate.anchor,
       connectionType: candidate.connectionType,
       memoryTarget: meta.memoryTarget,
@@ -214,7 +266,9 @@ export function connectionRowData(
       discoveryConfidence: candidate.confidence,
       verdict: meta.scored?.verdict ?? null,
       baseScore: meta.scored?.baseScore ?? null,
-      personalization: meta.scored?.personalization ?? null
+      personalization: meta.scored?.personalization ?? null,
+      domainBonus: meta.scored?.domainBonus ?? null,
+      phonetic: candidate.phonetic ?? null
     },
     status: meta.status,
     rejectionReason: meta.rejectionReason,

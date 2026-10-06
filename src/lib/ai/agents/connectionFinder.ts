@@ -64,7 +64,9 @@ const SYSTEM_PROMPT =
   '   - شكل/لون/ترتيب ← أشياء يومية أو رموز أو مشاهد بصرية معروفة.\n' +
   '   - علاقة/وظيفة ← تشبيه بنيوي بشي يومي، أو قصة/مشهد يمشي بنفس النمط.\n' +
   '   كل المجالات مسموحة (مسلسلات، أفلام، أنمي، ألعاب، كورة، موسيقى، مشاهير، سيارات، تاريخ، ' +
-  'حياة يومية، لغة، أمثال) — لكن فقط إذا العلاقة حقيقية ومباشرة مع العنصر نفسه.\n\n' +
+  'حياة يومية، لغة، أمثال) — لكن فقط إذا العلاقة حقيقية ومباشرة مع العنصر نفسه.\n' +
+  '   المسلسلات والأنمي أولوية: دوّر فيها بجدية أول (شخصيات، أحداث، أعداد، مشاهد، عبارات شهيرة) ' +
+  'وخلّ ثلث المرشحين على الأقل منها إذا لقيت روابط صادقة — بدون ما تلفّق رابط عشان تكمل العدد.\n\n' +
   'قواعد صارمة:\n' +
   '- الاتجاه دائمًا: عنصر من المعلومة ← مرجع حقيقي. ممنوع تختار مرجع أول ثم تدوّر له علاقة.\n' +
   '- كل مرشح بمرجع مختلف، وغطِّ عنصرين على الأقل وأنواع ربط مختلفة.\n' +
@@ -161,7 +163,7 @@ function normalizeAnchor(raw: unknown): Anchor | null {
 }
 
 /** Coerces model output into the DB-safe shape; drops anything missing the essentials. */
-function normalizeCandidate(raw: unknown, id: string, fallbackEmoji: string): BridgeCandidate | null {
+export function normalizeCandidate(raw: unknown, id: string, fallbackEmoji: string): BridgeCandidate | null {
   const c = raw as Record<string, unknown> | null;
   if (!c) return null;
   const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
@@ -173,10 +175,14 @@ function normalizeCandidate(raw: unknown, id: string, fallbackEmoji: string): Br
   const type = str(c.connectionType).toUpperCase() as BridgeConnectionType;
   const distance = Math.round(Number(c.relationDistance));
 
+  const soundsLike = str(c.soundsLike);
+  const matchedSound = str(c.matchedSound);
+  const connectionType: BridgeConnectionType = CONNECTION_TYPES.includes(type) ? type : 'SEMANTIC';
+
   return {
     id,
     anchor: str(c.anchor),
-    connectionType: CONNECTION_TYPES.includes(type) ? type : 'SEMANTIC',
+    connectionType,
     worldCategory: WORLD_CATEGORIES.includes(category) ? category : 'GENERAL_KNOWLEDGE',
     worldRef,
     atomEmoji: str(c.atomEmoji) || fallbackEmoji,
@@ -184,7 +190,10 @@ function normalizeCandidate(raw: unknown, id: string, fallbackEmoji: string): Br
     whyOneLiner: str(c.whyOneLiner),
     evidence: str(c.evidence),
     confidence: clamp01(Number(c.confidence)),
-    relationDistance: Number.isFinite(distance) && distance > 0 ? distance : 3
+    relationDistance: Number.isFinite(distance) && distance > 0 ? distance : 3,
+    ...(connectionType === 'PHONETIC' && soundsLike && matchedSound
+      ? { phonetic: { term: str(c.anchor), soundsLike, matchedSound } }
+      : {})
   };
 }
 

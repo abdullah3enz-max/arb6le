@@ -64,7 +64,8 @@ function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionC
     worldRef: connection.worldRef,
     bridgeLine: connection.bridgeLine,
     whyOneLiner: connection.whyOneLiner,
-    claimType: connection.claimType
+    claimType: connection.claimType,
+    badge: connection.associationLevel === 'PHONETIC' ? '🔊 تشابه صوتي' : undefined
   };
 }
 

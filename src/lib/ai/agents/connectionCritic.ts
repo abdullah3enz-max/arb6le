@@ -16,6 +16,9 @@ const SYSTEM_PROMPT =
   '2) linkTrue: هل الرابط تطابق حقيقي مع العنصر (نفس الرقم فعلًا، أو مقطع كامل ينطق مثله فعلًا، ' +
   'أو نفس عدد المراحل وترتيبها، أو نفس المعنى)؟ حرف أو حرفين مشتركين = false. "اسم مشهور = صفة ' +
   'عامة" (فلان = الدقة/القوة/العمق) = false.\n' +
+  '   للتشابه الصوتي (PHONETIC): قارن soundsLike مع matchedSound بنفسك — لازم يتطابق مقطع كامل ' +
+  '(مقطعين متتاليين أو أكثر، أو المقطع الرئيسي كله لكلمة قصيرة) بدون تحريف نطق المصطلح، وإلا linkTrue=false. ' +
+  'وتأكد إن الاسم أو العبارة موجودة فعلًا بالمسلسل/الأنمي المذكور، وإلا factTrue=false.\n' +
   '3) forcedness: NATURAL (أي شخص يشوف الرابط يقول "صح!")، WEAK (صحيح بس يحتاج تبرير)، ' +
   'FORCED (مصطنع أو محشور).\n' +
   '4) relationDistance: عدد الخطوات الذهنية فعليًا بين العنصر والمرجع (1 = مباشر).\n' +
@@ -59,7 +62,8 @@ export async function verifyBridges(
             worldRef: c.worldRef,
             bridgeLine: c.bridgeLine,
             whyOneLiner: c.whyOneLiner,
-            evidence: c.evidence
+            evidence: c.evidence,
+            ...(c.phonetic ? { soundsLike: c.phonetic.soundsLike, matchedSound: c.phonetic.matchedSound } : {})
           }))
         })
       }
