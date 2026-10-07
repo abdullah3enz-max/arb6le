@@ -2,9 +2,17 @@ import { AnthropicProvider } from './providers/anthropic';
 import { OpenAiCompatibleProvider } from './providers/openaiCompatible';
 import { MockProvider } from './providers/mock';
 import type { LlmCallOptions, LlmCallResult, LlmProvider } from './providers/types';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { db } from '@/lib/db';
 
 export type ModelTier = 'fast' | 'strong';
+
+/** Benchmark-only: runs a block of work against another model of the same provider. */
+const modelOverride = new AsyncLocalStorage<{ model: string }>();
+
+export function withModelOverride<T>(model: string | undefined, fn: () => Promise<T>): Promise<T> {
+  return model ? modelOverride.run({ model }, fn) : fn();
+}
 
 const cache = new Map<string, LlmCallResult>();
 
@@ -20,6 +28,12 @@ interface ProviderConfig {
  * is exactly what the next real call will use, not a best guess kept in sync by hand.
  */
 function resolveProviderConfig(tier: ModelTier): ProviderConfig {
+  const config = resolveConfiguredProvider(tier);
+  const forced = modelOverride.getStore()?.model;
+  return forced && config.provider !== 'mock' ? { ...config, model: forced } : config;
+}
+
+function resolveConfiguredProvider(tier: ModelTier): ProviderConfig {
   const requested = process.env.LLM_PROVIDER; // 'anthropic' | 'openai_compatible' | unset (auto)
 
   const wantsAnthropic = requested === 'anthropic' || (!requested && process.env.ANTHROPIC_API_KEY);
@@ -130,7 +144,8 @@ interface RoutedCallArgs extends LlmCallOptions {
  * every outcome is actually recorded, not just successful paid calls.
  */
 export async function routedComplete(args: RoutedCallArgs): Promise<LlmCallResult> {
-  const cacheKey = args.cacheKey ? `${args.agent}:${args.tier}:${args.cacheKey}` : undefined;
+  const forced = modelOverride.getStore()?.model;
+  const cacheKey = args.cacheKey ? `${args.agent}:${args.tier}:${forced ?? ''}:${args.cacheKey}` : undefined;
   const startedAt = Date.now();
 
   if (cacheKey && cache.has(cacheKey)) {

@@ -360,6 +360,35 @@ enum ConnectionStatus {
   REJECTED
   BELOW_THRESHOLD
   NO_CONNECTION_FOUND // system explicitly declined to invent one
+  ALTERNATIVE // passed every gate but ranked below the shown one — served by "🔄 رابط آخر"
+}
+
+// Retrieval layer: verified facts ABOUT an interest (characters, numbers, quotes, places...),
+// fetched once per interest and shared by every student. Associations built on an interest rest
+// on these rows, not on whatever the model happens to remember while generating.
+model InterestFact {
+  id            String        @id @default(cuid())
+  interestKey   String        // normalizeRef(interest name)
+  interest      String
+  worldCategory WorldCategory
+  kind          String        // NUMBER | CHARACTER | ACTOR | ROLE | OBJECT | LOCATION | EVENT | ABILITY | QUOTE | RELATION
+  subject       String        // "Cristiano Ronaldo"
+  attribute     String        // "رقم القميص"
+  value         String        // "7"
+  shortForm     String        // "Ronaldo #7" — what an association line shows
+  confidence    Float
+  createdAt     DateTime      @default(now())
+
+  @@index([interestKey])
+}
+
+/// One row per interest that has been retrieved (even if nothing survived verification), so the
+/// same interest is not re-fetched for every document.
+model InterestRetrieval {
+  interestKey String   @id
+  interest    String
+  factCount   Int
+  retrievedAt DateTime @default(now())
 }
 
 model ConnectionSource {

@@ -57,6 +57,13 @@ export const ADMIN_NAV: AdminNavGroup[] = [
         permission: 'analytics.view',
         ready: true
       },
+      {
+        href: '/admin/erbotli-ai/benchmark',
+        label: 'اختبار محرك الربط',
+        icon: '🧪',
+        permission: 'analytics.view',
+        ready: true
+      },
       { href: '/admin/erbotli-ai/interests', label: 'الاهتمامات', icon: '❤️', permission: 'analytics.view', ready: true },
       { href: '/admin/erbotli-ai/processing', label: 'الملفات والمعالجة', icon: '📄', permission: 'analytics.view' }
     ]

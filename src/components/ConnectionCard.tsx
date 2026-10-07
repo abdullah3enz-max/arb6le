@@ -12,7 +12,7 @@ export interface ConnectionCardData {
   bridgeLine: string; // the entire mnemonic: "Ronaldo = 7"
   whyOneLiner: string; // shown only on the back of the card
   claimType: 'FACT' | 'ANALOGY' | 'INTERPRETATION';
-  /** Small tag naming the kind of bridge, e.g. "🔊 تشابه صوتي". */
+  /** Small tag naming the kind of association and its confidence, e.g. "🔊 تشابه صوتي · قوي". */
   badge?: string;
 }
 
@@ -27,7 +27,7 @@ export function ConnectionCard({
   onLove,
   onDidntGetIt,
   onDifferentInterest,
-  differentInterestLabel = '🔄 اربطها بشيء آخر',
+  differentInterestLabel = '🔄 رابط آخر',
   disabled = false
 }: {
   data: ConnectionCardData;
@@ -45,7 +45,7 @@ export function ConnectionCard({
 
   return (
     <div className="animate-fade-up">
-      <div className="h-64" style={{ perspective: '1400px' }}>
+      <div className="h-72" style={{ perspective: '1400px' }}>
         <div
           className="relative h-full w-full transition-transform duration-500 ease-out"
           style={{ transformStyle: 'preserve-3d', transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}
@@ -55,24 +55,37 @@ export function ConnectionCard({
             className="absolute inset-0 flex flex-col overflow-hidden rounded-xl2 border border-ink-100 bg-surface shadow-card"
             style={{ backfaceVisibility: 'hidden' }}
           >
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 py-6 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-5 py-5 text-center">
               {data.badge && (
                 <span className="rounded-full bg-accent-50 px-3 py-0.5 text-xs font-bold text-accent-600">
                   {data.badge}
                 </span>
               )}
-              <p className="text-sm text-ink-500">{data.conceptTitle}</p>
 
-              <div className="flex items-center justify-center gap-2 text-lg font-semibold text-ink-700">
-                <span>{data.atomEmoji}</span>
-                <span>{data.atomLabel}</span>
+              <div>
+                <p className="text-[11px] font-bold text-ink-400">المعلومة</p>
+                <p className="mt-0.5 flex items-center justify-center gap-1.5 text-base font-semibold text-ink-700">
+                  <span>{data.atomEmoji}</span>
+                  <span>
+                    {data.conceptTitle && data.conceptTitle !== data.atomLabel ? `${data.conceptTitle}: ` : ''}
+                    {data.atomLabel}
+                  </span>
+                </p>
               </div>
 
-              <p className="text-xs font-bold uppercase tracking-wide text-ink-400">↓ اربطها بـ</p>
+              <div>
+                <p className="text-[11px] font-bold text-ink-400">أفضل ربط</p>
+                <p className="mt-0.5 flex items-center justify-center gap-1.5 text-base font-bold text-ink-900">
+                  <span>{data.worldEmoji}</span>
+                  <span>{data.worldRef}</span>
+                </p>
+              </div>
 
-              <div className="flex items-center justify-center gap-2 text-2xl font-extrabold text-ink-900">
-                <span>{data.worldEmoji}</span>
-                <span className="text-accent-500">{data.bridgeLine}</span>
+              <div>
+                <p className="text-[11px] font-bold text-ink-400">الرابط</p>
+                <p className="mt-0.5 text-2xl font-extrabold text-accent-500" dir="auto">
+                  {data.bridgeLine}
+                </p>
               </div>
             </div>
 

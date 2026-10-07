@@ -3,7 +3,7 @@ import type { FeedbackReaction } from '@prisma/client';
 
 /**
  * Item 17: Personalization Loop. Pure bookkeeping, no LLM call — every user interaction
- * nudges Preference.weight, which connectionFinder.ts reads back as a `familiarity` bonus.
+ * nudges Preference.weight, which bridgeScoring.preference() reads back (20% of the ranking).
  */
 const REACTION_DELTA: Record<FeedbackReaction, number> = {
   LOVE: 20,
@@ -18,9 +18,17 @@ export async function applyFeedbackToPreferences(params: {
   reaction: FeedbackReaction;
   worldCategory: string;
   associationLevel: string;
+  /** A-H association type and the fact type it was used for — read back by preference(). */
+  associationType?: string;
+  factType?: string;
 }) {
   const delta = REACTION_DELTA[params.reaction];
   const keys = [`world:${params.worldCategory.toLowerCase()}`, `association_level:${params.associationLevel.toLowerCase()}`];
+  if (params.associationType) {
+    const type = params.associationType.toLowerCase();
+    keys.push(`association_type:${type}`);
+    if (params.factType) keys.push(`fact_assoc:${params.factType.toLowerCase()}:${type}`);
+  }
 
   await Promise.all(
     keys.map((key) =>

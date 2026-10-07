@@ -2,8 +2,9 @@ import type { Anchor } from './types';
 
 const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
 
+// No "one": in running text it is almost always an indefinite ("one of the oldest", "one study"),
+// and treating it as the number 1 turned plain word facts into number facts.
 const NUMBER_WORDS: Record<string, number> = {
-  one: 1,
   two: 2,
   three: 3,
   four: 4,
@@ -69,7 +70,9 @@ export function extractNumericAnchors(rawText: string): Anchor[] {
   for (const m of text.matchAll(wordRe)) {
     const n = NUMBER_WORDS[m[1]!.toLowerCase()]!;
     const noun = cleanUnit(m[2]);
-    anchors.push({ text: noun ? `${n} ${noun}` : String(n), kind: 'NUMBER', relevance: 0.85 });
+    // Only a counted noun ("four chambers") — not "two of the", "three to five", etc.
+    if (!noun) continue;
+    anchors.push({ text: `${n} ${noun}`, kind: 'NUMBER', relevance: 0.85 });
   }
 
   const seen = new Set<string>();

@@ -2,11 +2,12 @@ import { db } from '@/lib/db';
 import { extractConcepts } from '@/lib/ai/agents/conceptExtractor';
 import { mapConceptRelations } from '@/lib/ai/agents/knowledgeMapper';
 import { retrieveUserMemoryProfile } from '@/lib/ai/agents/preferenceRetriever';
+import { loadInterestFacts, type InterestFactRow } from '@/lib/ai/agents/interestRetriever';
 import { generateQuiz } from '@/lib/ai/agents/quizGenerator';
 import { connectionRowData, findBridges, sourceRowData } from '@/lib/ai/bridgeEngine';
 import { normalizeRef } from '@/lib/ai/bridgeScoring';
 import { buildFlashcardBack } from '@/lib/study/flashcardText';
-import type { ExtractedConcept, UserMemoryProfile } from '@/lib/ai/types';
+import type { ExtractedConcept, ScoredBridge, UserMemoryProfile } from '@/lib/ai/types';
 
 export type PipelineStage =
   | 'MAPPING_CONCEPTS'
@@ -190,71 +191,108 @@ type SavedConcept = { id: string; title: string; summary: string; atomLabel: str
 async function findAndSaveBestConnection(
   concept: SavedConcept,
   extractedConcept: ExtractedConcept,
-  profile: UserMemoryProfile,
-  userId: string,
-  refUsage: Map<string, number>
+  ctx: ConnectContext
 ) {
   try {
-    await searchAndSaveConnection(concept, extractedConcept, profile, userId, refUsage);
+    await searchAndSaveConnection(concept, extractedConcept, ctx);
   } catch (error) {
     console.error('Connection search failed for concept (non-fatal):', concept.id, error);
-    await createFlashcard(concept, userId, null);
+    await createFlashcard(concept, ctx.userId, null);
   }
 }
 
-/** One reference may carry at most this many approved bridges per document — no monopolies. */
+/** One reference may carry at most this many shown associations per document — no monopolies. */
 const MAX_APPROVALS_PER_REF = 2;
+/** Passing runners-up kept per fact for "🔄 رابط آخر" — shown only on request, never by default. */
+const MAX_ALTERNATIVES = 2;
 /** Rejected candidates kept per concept for analysis (the debug trace has the full list). */
-const STORED_REJECTIONS_PER_CONCEPT = 8;
+const STORED_REJECTIONS_PER_CONCEPT = 10;
+/** Per association type already shown in this document; keeps one type from taking over. */
+const TYPE_REPEAT_PENALTY = 0.02;
+const MAX_TYPE_PENALTY = 0.06;
 
-async function searchAndSaveConnection(
-  concept: SavedConcept,
-  extractedConcept: ExtractedConcept,
-  profile: UserMemoryProfile,
-  userId: string,
-  refUsage: Map<string, number>
-) {
-  const overused = [...refUsage.entries()].filter(([, n]) => n >= MAX_APPROVALS_PER_REF).map(([ref]) => ref);
-  const result = await findBridges(extractedConcept, profile, { userId, excludeRefs: overused });
+interface ConnectContext {
+  profile: UserMemoryProfile;
+  userId: string;
+  interestFacts: InterestFactRow[];
+  refUsage: Map<string, number>;
+  typeUsage: Map<string, number>;
+}
+
+/**
+ * Association diversity: among passing associations, a type already used often in this document
+ * loses a little (max 0.06), and a reference at its cap is skipped. A clearly stronger
+ * association still wins; near-ties go to variety (sound, anime, movie, number...).
+ */
+export function pickWithDiversity(
+  accepted: ScoredBridge[],
+  refUsage: Map<string, number>,
+  typeUsage: Map<string, number>
+): number {
+  let best = -1;
+  let bestScore = -Infinity;
+  accepted.forEach((a, i) => {
+    if ((refUsage.get(normalizeRef(a.candidate.worldRef)) ?? 0) >= MAX_APPROVALS_PER_REF) return;
+    const penalty = Math.min(MAX_TYPE_PENALTY, TYPE_REPEAT_PENALTY * (typeUsage.get(a.candidate.connectionType) ?? 0));
+    if (a.final - penalty > bestScore) {
+      bestScore = a.final - penalty;
+      best = i;
+    }
+  });
+  return best;
+}
+
+async function searchAndSaveConnection(concept: SavedConcept, extractedConcept: ExtractedConcept, ctx: ConnectContext) {
+  const overused = [...ctx.refUsage.entries()].filter(([, n]) => n >= MAX_APPROVALS_PER_REF).map(([ref]) => ref);
+  const result = await findBridges(extractedConcept, ctx.profile, {
+    userId: ctx.userId,
+    excludeRefs: overused,
+    interestFacts: ctx.interestFacts
+  });
+  const base = { factType: result.factType, memoryTarget: result.memoryTarget };
 
   if (result.rejected.length) {
     await db.connection.createMany({
       data: result.rejected.slice(0, STORED_REJECTIONS_PER_CONCEPT).map((r) =>
         connectionRowData(concept.id, concept.atomLabel, r.candidate, {
-          status: r.baseScore === null ? 'REJECTED' : 'BELOW_THRESHOLD',
-          score: r.baseScore ?? 0,
-          memoryTarget: result.memoryTarget,
-          rejectionReason: r.reason
+          ...base,
+          status: r.quality === null ? 'REJECTED' : 'BELOW_THRESHOLD',
+          rejected: r
         })
       )
     });
   }
 
-  for (const scored of result.accepted) {
-    // Checked and reserved synchronously (no await in between): other concepts run in parallel
-    // and may have taken this reference's last slot while this one was being verified.
-    const refKey = normalizeRef(scored.candidate.worldRef);
-    const used = refUsage.get(refKey) ?? 0;
-    if (used >= MAX_APPROVALS_PER_REF) continue;
-    refUsage.set(refKey, used + 1);
+  // Picked and reserved synchronously (no await in between): other concepts run in parallel.
+  const index = pickWithDiversity(result.accepted, ctx.refUsage, ctx.typeUsage);
+  if (index === -1) {
+    // NO STRONG ASSOCIATION FOUND — no bridge, but the fact still becomes a flashcard.
+    await createFlashcard(concept, ctx.userId, null);
+    return;
+  }
+  const chosen = result.accepted[index]!;
+  const refKey = normalizeRef(chosen.candidate.worldRef);
+  ctx.refUsage.set(refKey, (ctx.refUsage.get(refKey) ?? 0) + 1);
+  ctx.typeUsage.set(chosen.candidate.connectionType, (ctx.typeUsage.get(chosen.candidate.connectionType) ?? 0) + 1);
 
-    const connection = await db.connection.create({
+  const connection = await db.connection.create({
+    data: {
+      ...connectionRowData(concept.id, concept.atomLabel, chosen.candidate, { ...base, status: 'APPROVED', scored: chosen }),
+      sources: { create: [sourceRowData(chosen.candidate)] }
+    }
+  });
+
+  const alternatives = result.accepted.filter((_, i) => i !== index).slice(0, MAX_ALTERNATIVES);
+  for (const alt of alternatives) {
+    await db.connection.create({
       data: {
-        ...connectionRowData(concept.id, concept.atomLabel, scored.candidate, {
-          status: 'APPROVED',
-          score: scored.score,
-          memoryTarget: result.memoryTarget,
-          scored
-        }),
-        sources: { create: [sourceRowData(scored.candidate)] }
+        ...connectionRowData(concept.id, concept.atomLabel, alt.candidate, { ...base, status: 'ALTERNATIVE', scored: alt }),
+        sources: { create: [sourceRowData(alt.candidate)] }
       }
     });
-    await createFlashcard(concept, userId, { id: connection.id, atomEmoji: connection.atomEmoji, bridgeLine: connection.bridgeLine });
-    return; // one bridge per fact — the best one
   }
-  // Nothing survived verification even after an expansion round: no bridge, but the fact still
-  // becomes a flashcard — a student needs to memorize it either way.
-  await createFlashcard(concept, userId, null);
+
+  await createFlashcard(concept, ctx.userId, { id: connection.id, atomEmoji: connection.atomEmoji, bridgeLine: connection.bridgeLine });
 }
 
 /** Runs the connection stage for every saved concept of a document (shared by first processing
@@ -265,11 +303,14 @@ async function connectAllConcepts(
   userId: string
 ) {
   const profile = await retrieveUserMemoryProfile(userId);
+  // RETRIEVAL before generation: verified facts about the student's interests, fetched once and
+  // shared, so interest associations rest on stored facts rather than the model's memory.
+  const interestFacts = await loadInterestFacts(profile, userId);
+  const ctx: ConnectContext = { profile, userId, interestFacts, refUsage: new Map(), typeUsage: new Map() };
   // Concurrency is capped, not unlimited: a real provider still has a requests-per-minute ceiling.
   const concurrency = Math.max(1, Number(process.env.PIPELINE_CONCEPT_CONCURRENCY ?? '4'));
-  const refUsage = new Map<string, number>();
   await mapWithConcurrency(savedConcepts, concurrency, (concept) =>
-    findAndSaveBestConnection(concept, extracted.find((c) => c.title === concept.title)!, profile, userId, refUsage)
+    findAndSaveBestConnection(concept, extracted.find((c) => c.title === concept.title)!, ctx)
   );
 }
 

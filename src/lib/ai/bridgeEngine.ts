@@ -2,15 +2,22 @@ import { extractNumericAnchors } from './anchors';
 import { discoverBridges } from './agents/connectionFinder';
 import { verifyBridges } from './agents/connectionCritic';
 import { checkEvidence } from './agents/factChecker';
-import { discoverSoundScreenBridges } from './agents/soundScreenFinder';
+import { discoverInterestBridges, hasInterests, numericInterestMatches } from './agents/interestFinder';
+import type { InterestFactRow } from './agents/interestRetriever';
+import { discoverPhoneticBridges } from './agents/phoneticFinder';
 import {
-  baseScore,
-  BRIDGE_SCORE_THRESHOLD,
-  domainBonus,
+  confidenceLabel,
+  finalScore,
   gateVerdict,
+  lowQualityReason,
   normalizeRef,
-  personalizationBonus
+  numbersIn,
+  preGate,
+  preference,
+  QUALITY_THRESHOLD,
+  quality
 } from './bridgeScoring';
+import { allowedTypes, classifyFact, hasNumericAnchor, typeRank } from './factTypes';
 import type {
   Anchor,
   AssociationLevel,
@@ -18,35 +25,46 @@ import type {
   BridgeConnectionType,
   ClaimType,
   ExtractedConcept,
+  FactType,
+  RejectReason,
   ScoredBridge,
   UserMemoryProfile
 } from './types';
 
 /*
- * CONCEPT → ANCHOR → DISCOVERY → VERIFICATION → RANKING (+≤5 personalization, +≤5 domain)
+ * CORE ASSOCIATION ENGINE
  *
- * Discovery runs two passes side by side: the general one (15-20 candidates, any domain) and a
- * sound & screen one (sound-alike terms and series/anime bridges). Both are anchored on the fact,
- * and both feed the same STRICT verification
- * (independent, temperature 0, hard gates on truth/link/forcedness/distance). If nothing survives,
- * one expansion round searches other anchors/types/domains, told why round one failed. Only then
- * does the concept honestly end with no bridge.
+ *   FACT → CLASSIFY (fact type → allowed association types)
+ *        → STAGE 1: three discovery passes in parallel
+ *             general (every allowed type) · phonetic & word · interest (optional pool + verified
+ *             interest facts), plus exact number matches against retrieved interest facts
+ *        → deterministic pre-gates (one-glance length, real number, sound pair, evidence)
+ *        → STAGE 2: one independent judge for the whole batch
+ *        → hard gates → quality ≥ threshold (judge only)
+ *        → rank: 0.8 × quality + 0.2 × preference
+ *
+ * If nothing survives, one expansion round tries again, told why round one failed. Then the
+ * fact honestly ends with NO STRONG ASSOCIATION — it still becomes a flashcard.
  */
 
 const MAX_ROUNDS = 2;
-/** Candidates sent to the verifier per round — the most diverse slice of what discovery found. */
-const VERIFY_BATCH = 16;
+/** Candidates judged per round — a balanced slice across the discovery passes. */
+const VERIFY_BATCH = 18;
+/** Numbers must not crowd out the other association types in the judge's batch. */
+const MAX_NUMERIC_IN_BATCH = 4;
 
 export interface RejectedBridge {
   candidate: BridgeCandidate;
+  code: RejectReason;
   reason: string;
-  baseScore: number | null;
+  quality: number | null;
 }
 
 export interface BridgeSearchResult {
+  factType: FactType;
   memoryTarget: string;
   anchors: Anchor[];
-  /** Passing bridges, best first (base score + personalization). */
+  /** Passing associations, best first. The first is shown; the rest are "🔄 رابط آخر". */
   accepted: ScoredBridge[];
   rejected: RejectedBridge[];
   rounds: number;
@@ -57,6 +75,8 @@ export interface BridgeSearchOptions {
   userId: string;
   excludeRefs?: string[];
   excludeTypes?: BridgeConnectionType[];
+  /** Retrieved, verified facts about the student's interests (see interestRetriever.ts). */
+  interestFacts?: InterestFactRow[];
 }
 
 export async function findBridges(
@@ -64,101 +84,130 @@ export async function findBridges(
   profile: UserMemoryProfile,
   opts: BridgeSearchOptions
 ): Promise<BridgeSearchResult> {
-  const detectedAnchors = extractNumericAnchors(`${concept.atomLabel}\n${concept.title}\n${concept.summary}`);
-  const seenRefs = new Set((opts.excludeRefs ?? []).map(normalizeRef));
+  const factText = `${concept.atomLabel}\n${concept.title}\n${concept.summary}`;
+  const detectedAnchors = extractNumericAnchors(factText);
+  const hasNumber = hasNumericAnchor(detectedAnchors);
+  const interestFacts = opts.interestFacts ?? [];
   const excludedTypes = new Set(opts.excludeTypes ?? []);
-  const accepted: ScoredBridge[] = [];
-  const rejected: RejectedBridge[] = [];
+  const seenRefs = new Set((opts.excludeRefs ?? []).map(normalizeRef));
+
+  let factType = classifyFact(concept, detectedAnchors);
   let memoryTarget = concept.atomLabel;
   let anchors: Anchor[] = detectedAnchors;
+  const accepted: ScoredBridge[] = [];
+  const rejected: RejectedBridge[] = [];
   let priorRejections: string[] = [];
   let discovered = 0;
   let round = 0;
 
   while (round < MAX_ROUNDS && accepted.length === 0) {
     round++;
-    const excludeRefs = [...seenRefs];
-    // Either pass may fail (bad JSON, timeout) without losing the other's candidates.
-    const [core, screen] = await Promise.allSettled([
-      discoverBridges(concept, {
-        userId: opts.userId,
-        detectedAnchors,
-        excludeRefs,
-        excludeTypes: opts.excludeTypes ?? [],
-        round,
-        priorRejections
-      }),
-      discoverSoundScreenBridges(concept, {
-        userId: opts.userId,
-        memoryTarget,
-        detectedAnchors,
-        excludeRefs,
-        round,
-        priorRejections
-      })
+    const allowed = allowedTypes(factType, hasNumber).filter((t) => !excludedTypes.has(t));
+    const shared = {
+      userId: opts.userId,
+      factType,
+      allowedTypes: allowed,
+      detectedAnchors,
+      excludeRefs: [...seenRefs],
+      round,
+      priorRejections
+    };
+    const wantsSound = allowed.includes('PHONETIC') || allowed.includes('WORD');
+    const wantsInterest = hasInterests(profile);
+
+    // Any pass may fail (bad JSON, timeout) without losing the others' candidates.
+    const [general, sound, interest] = await Promise.allSettled([
+      discoverBridges(concept, shared),
+      wantsSound ? discoverPhoneticBridges(concept, shared) : Promise.resolve([]),
+      wantsInterest ? discoverInterestBridges(concept, { ...shared, profile, facts: interestFacts }) : Promise.resolve([])
     ]);
-    if (core.status === 'rejected' && screen.status === 'rejected') throw core.reason;
+    const attempted = [general, ...(wantsSound ? [sound] : []), ...(wantsInterest ? [interest] : [])];
+    if (attempted.every((p) => p.status === 'rejected')) throw (general as PromiseRejectedResult).reason;
 
-    if (core.status === 'fulfilled' && round === 1) {
-      memoryTarget = core.value.memoryTarget;
-      anchors = core.value.anchors.length ? core.value.anchors : detectedAnchors;
+    if (general.status === 'fulfilled' && round === 1) {
+      memoryTarget = general.value.memoryTarget;
+      anchors = general.value.anchors.length ? general.value.anchors : detectedAnchors;
+      // The model may refine the fact type, but never into a number type without a real number.
+      const refined = general.value.factType;
+      if ((refined !== 'NUMBER' && refined !== 'TIME') || hasNumber) factType = refined;
     }
-    const coreCandidates = core.status === 'fulfilled' ? core.value.candidates : [];
-    const screenCandidates = screen.status === 'fulfilled' ? screen.value : [];
-    discovered += coreCandidates.length + screenCandidates.length;
+    const allowedNow = new Set(allowedTypes(factType, hasNumber).filter((t) => !excludedTypes.has(t)));
 
-    const [corePool, screenPool] = await Promise.all(
-      [coreCandidates, screenCandidates].map(async (list) => {
-        const pool: BridgeCandidate[] = [];
-        for (const c of list) {
-          if (excludedTypes.has(c.connectionType)) continue;
-          const key = normalizeRef(c.worldRef);
-          if (!key || seenRefs.has(key)) continue;
-          seenRefs.add(key);
-          const check = await checkEvidence(c);
-          if (check.passed) pool.push(c);
-          else rejected.push({ candidate: c, reason: check.reason, baseScore: null });
+    const sources: BridgeCandidate[][] = [
+      hasNumber ? numericInterestMatches(numbersIn(`${concept.atomLabel} ${concept.title}`), interestFacts, round, concept.atomEmoji) : [],
+      interest.status === 'fulfilled' ? interest.value : [],
+      sound.status === 'fulfilled' ? sound.value : [],
+      general.status === 'fulfilled' ? general.value.candidates : []
+    ];
+    discovered += sources.reduce((n, s) => n + s.length, 0);
+
+    const pools: BridgeCandidate[][] = [];
+    for (const list of sources) {
+      const pool: BridgeCandidate[] = [];
+      for (const c of list) {
+        const reject = (code: RejectReason, reason: string) => rejected.push({ candidate: c, code, reason, quality: null });
+        if (!allowedNow.has(c.connectionType)) {
+          reject('weak_relation', `نوع ربط ${c.connectionType} ما يناسب معلومة من نوع ${factType}`);
+          continue;
         }
-        return pool;
-      })
-    );
+        const key = normalizeRef(c.worldRef);
+        if (!key || seenRefs.has(key)) {
+          reject('duplicate', 'مرجع مكرر أو مستخدم كثير في هالملف');
+          continue;
+        }
+        seenRefs.add(key);
+        const pre = preGate(c, factText);
+        if (pre) {
+          reject(pre.code, pre.message);
+          continue;
+        }
+        if (!c.interestFactId) {
+          const check = await checkEvidence(c);
+          if (!check.passed) {
+            reject('hallucination_risk', check.reason);
+            continue;
+          }
+        }
+        pool.push(c);
+      }
+      pools.push(pool);
+    }
 
-    // Alternate the two passes so sound-alike and series/anime candidates always reach the verifier.
-    const batch = interleave(diversify(screenPool!), diversify(corePool!)).slice(0, VERIFY_BATCH);
-    const verdicts = await verifyBridges(concept, memoryTarget, batch, { userId: opts.userId });
+    const batch = balancedBatch(pools.map(diversify));
+    const verdicts = await verifyBridges(concept, memoryTarget, batch, { userId: opts.userId, factType });
 
     const roundRejections: string[] = [];
     for (const c of batch) {
       const verdict = verdicts.get(c.id);
-      const gate = verdict ? gateVerdict(verdict) : 'المدقق ما أصدر حكم.';
-      if (!verdict || gate) {
-        rejected.push({ candidate: c, reason: gate!, baseScore: null });
-        roundRejections.push(`${c.bridgeLine} — ${gate}`);
+      if (!verdict) {
+        rejected.push({ candidate: c, code: 'weak_relation', reason: 'الحكم ما أصدر حكم', quality: null });
         continue;
       }
-      const base = baseScore(verdict);
-      if (base < BRIDGE_SCORE_THRESHOLD) {
-        const reason = `درجة ${base} أقل من الحد ${BRIDGE_SCORE_THRESHOLD}: ${verdict.reason}`;
-        rejected.push({ candidate: c, reason, baseScore: base });
-        roundRejections.push(`${c.bridgeLine} — ${reason}`);
+      const gate = gateVerdict(c, verdict);
+      if (gate) {
+        rejected.push({ candidate: c, code: gate.code, reason: gate.message, quality: null });
+        roundRejections.push(`${c.bridgeLine} — ${gate.code}: ${gate.message}`);
         continue;
       }
-      const personalization = personalizationBonus(c, profile);
-      const domain = domainBonus(c);
-      accepted.push({
-        candidate: c,
-        verdict,
-        baseScore: base,
-        personalization,
-        domainBonus: domain,
-        score: base + personalization + domain
-      });
+      const q = quality(verdict);
+      if (q < QUALITY_THRESHOLD) {
+        const code = lowQualityReason(verdict);
+        const reason = `ثقة ${q} أقل من ${QUALITY_THRESHOLD}: ${verdict.reason}`;
+        rejected.push({ candidate: c, code, reason, quality: q });
+        roundRejections.push(`${c.bridgeLine} — ${code}: ${reason}`);
+        continue;
+      }
+      const p = preference(c, profile, factType);
+      accepted.push({ candidate: c, verdict, quality: q, preference: p, final: finalScore(q, p) });
     }
     priorRejections = roundRejections.slice(0, 10);
   }
 
-  accepted.sort((a, b) => b.score - a.score);
-  const result: BridgeSearchResult = { memoryTarget, anchors, accepted, rejected, rounds: round, discovered };
+  accepted.sort(
+    (a, b) =>
+      b.final - a.final || typeRank(factType, a.candidate.connectionType) - typeRank(factType, b.candidate.connectionType)
+  );
+  const result: BridgeSearchResult = { factType, memoryTarget, anchors, accepted, rejected, rounds: round, discovered };
 
   if (process.env.CONNECTION_DEBUG === 'true') {
     console.log(
@@ -166,35 +215,29 @@ export async function findBridges(
       JSON.stringify({
         concept: concept.title,
         atom: concept.atomLabel,
+        factType,
         memoryTarget,
         anchors,
         rounds: round,
         discovered,
         accepted: accepted.map((a) => ({
-          bridge: a.candidate.bridgeLine,
-          base: a.baseScore,
-          bonus: a.personalization,
-          domain: a.domainBonus
+          type: a.candidate.connectionType,
+          link: a.candidate.bridgeLine,
+          quality: a.quality,
+          preference: a.preference,
+          final: a.final,
+          fromInterest: a.candidate.fromInterest ?? false
         })),
-        rejected: rejected.map((r) => ({ bridge: r.candidate.bridgeLine, reason: r.reason }))
+        rejected: rejected.map((r) => ({ type: r.candidate.connectionType, link: r.candidate.bridgeLine, code: r.code, reason: r.reason }))
       })
     );
   }
   return result;
 }
 
-export function interleave<T>(a: T[], b: T[]): T[] {
-  const out: T[] = [];
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (i < a.length) out.push(a[i]!);
-    if (i < b.length) out.push(b[i]!);
-  }
-  return out;
-}
-
 /**
- * One candidate per reference, then round-robin across connection types, so the verifier's
- * limited batch always spans different kinds of bridges instead of 12 variations of one idea.
+ * Within one pass: one candidate per reference, then round-robin across association types, so a
+ * pass that listed five number ideas first doesn't fill its share of the batch with numbers.
  */
 export function diversify(candidates: BridgeCandidate[]): BridgeCandidate[] {
   const seen = new Set<string>();
@@ -215,37 +258,61 @@ export function diversify(candidates: BridgeCandidate[]): BridgeCandidate[] {
   return ordered;
 }
 
+/**
+ * Round-robin across the discovery passes (verified interest numbers, interest, phonetic,
+ * general), one reference each, with numbers capped — so the judge always compares several
+ * association types instead of a batch of number matches.
+ */
+export function balancedBatch(pools: BridgeCandidate[][]): BridgeCandidate[] {
+  const batch: BridgeCandidate[] = [];
+  let numeric = 0;
+  const queues = pools.map((p) => [...p]);
+  while (batch.length < VERIFY_BATCH && queues.some((q) => q.length)) {
+    for (const q of queues) {
+      while (q.length) {
+        const c = q.shift()!;
+        if (c.connectionType === 'NUMERIC') {
+          if (numeric >= MAX_NUMERIC_IN_BATCH) continue;
+          numeric++;
+        }
+        batch.push(c);
+        break;
+      }
+      if (batch.length >= VERIFY_BATCH) break;
+    }
+  }
+  return batch;
+}
+
 const LEVEL_BY_TYPE: Record<BridgeConnectionType, AssociationLevel> = {
   NUMERIC: 'DIRECT_MATCH',
-  MEASUREMENT: 'DIRECT_MATCH',
   PHONETIC: 'PHONETIC',
   VISUAL: 'VISUAL',
-  DIRECT: 'FAMOUS_ASSOCIATION',
-  POP_CULTURE: 'FAMOUS_ASSOCIATION',
-  SPORTS: 'FAMOUS_ASSOCIATION',
-  SEMANTIC: 'CONTEXTUAL',
-  STRUCTURAL: 'CONTEXTUAL',
-  NARRATIVE: 'CONTEXTUAL',
-  EVERYDAY: 'CONTEXTUAL'
+  CHARACTER: 'FAMOUS_ASSOCIATION',
+  SCENE: 'CONTEXTUAL',
+  WORD: 'CONTEXTUAL',
+  CONCEPTUAL: 'CONTEXTUAL',
+  MINI_STORY: 'CONTEXTUAL'
 };
 
-const FACTUAL_TYPES: BridgeConnectionType[] = ['NUMERIC', 'MEASUREMENT', 'DIRECT'];
+const FACTUAL_TYPES: BridgeConnectionType[] = ['NUMERIC', 'CHARACTER', 'SCENE'];
 
-/** Maps a bridge onto the existing Connection row shape (no schema change needed). */
+/** Maps an association onto the existing Connection row shape. */
 export function connectionRowData(
   conceptId: string,
   atomLabel: string,
   candidate: BridgeCandidate,
   meta: {
-    status: 'APPROVED' | 'REJECTED' | 'BELOW_THRESHOLD';
-    score: number;
+    status: 'APPROVED' | 'ALTERNATIVE' | 'REJECTED' | 'BELOW_THRESHOLD';
+    factType: FactType;
     memoryTarget: string;
-    rejectionReason?: string;
     scored?: ScoredBridge;
+    rejected?: RejectedBridge;
     regenerationOf?: string;
   }
 ) {
   const claimType: ClaimType = FACTUAL_TYPES.includes(candidate.connectionType) ? 'FACT' : 'ANALOGY';
+  const final = meta.scored?.final ?? meta.rejected?.quality ?? 0;
   return {
     conceptId,
     associationLevel: LEVEL_BY_TYPE[candidate.connectionType],
@@ -256,22 +323,27 @@ export function connectionRowData(
     bridgeLine: candidate.bridgeLine,
     whyOneLiner: candidate.whyOneLiner,
     claimType,
-    score: meta.score,
+    score: Math.round(final * 100),
     scoreBreakdown: {
-      engine: 'anchor-first-v2',
-      anchor: candidate.anchor,
+      engine: 'association-v3',
+      factType: meta.factType,
       connectionType: candidate.connectionType,
+      anchor: candidate.anchor,
       memoryTarget: meta.memoryTarget,
       evidence: candidate.evidence,
       discoveryConfidence: candidate.confidence,
+      fromInterest: candidate.fromInterest ?? false,
+      interestFactId: candidate.interestFactId ?? null,
+      phonetic: candidate.phonetic ?? null,
+      quality: meta.scored?.quality ?? meta.rejected?.quality ?? null,
+      preference: meta.scored?.preference ?? null,
+      final: meta.scored?.final ?? null,
+      confidence: meta.scored ? confidenceLabel(meta.scored.quality) : null,
       verdict: meta.scored?.verdict ?? null,
-      baseScore: meta.scored?.baseScore ?? null,
-      personalization: meta.scored?.personalization ?? null,
-      domainBonus: meta.scored?.domainBonus ?? null,
-      phonetic: candidate.phonetic ?? null
+      rejectCode: meta.rejected?.code ?? null
     },
     status: meta.status,
-    rejectionReason: meta.rejectionReason,
+    rejectionReason: meta.rejected ? `${meta.rejected.code}: ${meta.rejected.reason}` : undefined,
     regenerationOf: meta.regenerationOf
   };
 }

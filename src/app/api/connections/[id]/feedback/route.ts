@@ -7,8 +7,12 @@ import { addXp } from '@/lib/gamification';
 
 const schema = z.object({
   reaction: z.enum(['LOVE', 'LIKE', 'NEUTRAL', 'DISLIKE', 'INCORRECT']),
-  note: z.string().max(1000).optional()
+  note: z.string().max(1000).optional(),
+  /** 👎 why — an internal reject code, defaulting from the reaction when the UI doesn't ask. */
+  reason: z.enum(['weak_relation', 'too_long', 'confusing', 'obscure_reference', 'forced_interest', 'inaccurate']).optional()
 });
+
+const DEFAULT_REASON: Partial<Record<string, string>> = { DISLIKE: 'confusing', INCORRECT: 'inaccurate' };
 
 /** Item 29: on INCORRECT, this is exactly the audit record the spec asks to keep — connectionId,
  *  concept, generated_claim, source, user_feedback — nothing is silently discarded. */
@@ -26,13 +30,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'الربط غير موجود.' }, { status: 404 });
     }
 
+    // The feedback-loop record: what kind of fact, what kind of association, which interest world,
+    // the association itself and its score — plus why, when the student rejected it.
+    const breakdown = (connection.scoreBreakdown ?? {}) as { factType?: string; connectionType?: string };
+    const snapshot = {
+      fact_type: breakdown.factType ?? null,
+      association_type: breakdown.connectionType ?? null,
+      interest_category: connection.worldCategory,
+      association: connection.bridgeLine,
+      score: connection.score,
+      reason: body.reason ?? DEFAULT_REASON[body.reaction] ?? null
+    };
     await db.connectionFeedback.create({
       data: {
         userId: user.id,
         connectionId: id,
         reaction: body.reaction,
         generatedClaim: connection.bridgeLine,
-        note: body.note
+        note: body.note ? `${JSON.stringify(snapshot)}\n${body.note}` : JSON.stringify(snapshot)
       }
     });
 
@@ -40,7 +55,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       userId: user.id,
       reaction: body.reaction,
       worldCategory: connection.worldCategory,
-      associationLevel: connection.associationLevel
+      associationLevel: connection.associationLevel,
+      associationType: breakdown.connectionType,
+      factType: breakdown.factType
     });
 
     if (body.reaction === 'LOVE' || body.reaction === 'LIKE') {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeConceptTitle, mapWithConcurrency } from './pipeline';
+import { normalizeConceptTitle, mapWithConcurrency, pickWithDiversity } from './pipeline';
+import type { ScoredBridge } from './types';
 
 describe('normalizeConceptTitle', () => {
   it('is a no-op on already-identical titles', () => {
@@ -60,5 +61,30 @@ describe('mapWithConcurrency', () => {
         return n;
       })
     ).rejects.toThrow('boom');
+  });
+});
+
+describe('pickWithDiversity', () => {
+  const scored = (worldRef: string, type: ScoredBridge['candidate']['connectionType'], final: number) =>
+    ({ candidate: { worldRef, connectionType: type }, final }) as ScoredBridge;
+
+  it('takes the best association when nothing has been used yet', () => {
+    expect(pickWithDiversity([scored('A', 'NUMERIC', 0.9), scored('B', 'PHONETIC', 0.85)], new Map(), new Map())).toBe(0);
+  });
+
+  it('a near-tie goes to a type not yet used in this document', () => {
+    const typeUsage = new Map([['NUMERIC', 3]]);
+    expect(pickWithDiversity([scored('A', 'NUMERIC', 0.9), scored('B', 'PHONETIC', 0.86)], new Map(), typeUsage)).toBe(1);
+  });
+
+  it('a clearly stronger association still wins over variety', () => {
+    const typeUsage = new Map([['NUMERIC', 10]]);
+    expect(pickWithDiversity([scored('A', 'NUMERIC', 0.95), scored('B', 'PHONETIC', 0.8)], new Map(), typeUsage)).toBe(0);
+  });
+
+  it('skips a reference already used twice in this document; -1 when nothing is left', () => {
+    const refUsage = new Map([['ronaldo', 2]]);
+    expect(pickWithDiversity([scored('Ronaldo', 'NUMERIC', 0.99), scored('سلطة', 'PHONETIC', 0.8)], refUsage, new Map())).toBe(1);
+    expect(pickWithDiversity([scored('Ronaldo', 'NUMERIC', 0.99)], refUsage, new Map())).toBe(-1);
   });
 });

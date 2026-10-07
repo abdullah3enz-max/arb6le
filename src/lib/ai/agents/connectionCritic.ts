@@ -1,42 +1,53 @@
 import { routedComplete, parseJsonResponse } from '@/lib/ai/router';
-import type { BridgeCandidate, BridgeVerdict, ExtractedConcept, Forcedness } from '@/lib/ai/types';
+import type { BridgeCandidate, BridgeVerdict, ExtractedConcept, FactType, RejectReason } from '@/lib/ai/types';
 
 /*
- * VERIFICATION — strict on purpose, and independent: a separate call that judges every candidate
- * at once (so it compares them against each other), at temperature 0, and never sees the
- * student's interests — personalization can't pressure a verdict it isn't told about.
+ * STAGE 2 — ASSOCIATION JUDGE. Strict and independent: one separate call judges every candidate
+ * at once (so they are compared against each other), at temperature 0. It never sees the
+ * student's profile — only whether a candidate came from their interests, so it can catch a
+ * forced one. It scores; the gates and the threshold in bridgeScoring.ts decide.
  */
 
-const SYSTEM_PROMPT =
-  '[AGENT:bridge_verifier] أنت مدقق مستقل وصارم لجسور ذاكرة. ما تولّد روابط — تحكم عليها فقط. ' +
-  'لكل مرشح أجب بدقة:\n' +
-  '1) factTrue: هل evidence صحيحة حرفيًا؟ دقّق الأرقام والأعداد والأسماء والتواريخ بالضبط ' +
-  '(عدد أعضاء، عدد جوائز، رقم قميص، عدد شخصيات أو مواسم...). إذا الرقم غلط أو مو متأكد → false. ' +
-  'لا تجامل.\n' +
-  '2) linkTrue: هل الرابط تطابق حقيقي مع العنصر (نفس الرقم فعلًا، أو مقطع كامل ينطق مثله فعلًا، ' +
-  'أو نفس عدد المراحل وترتيبها، أو نفس المعنى)؟ حرف أو حرفين مشتركين = false. "اسم مشهور = صفة ' +
-  'عامة" (فلان = الدقة/القوة/العمق) = false.\n' +
-  '   للتشابه الصوتي (PHONETIC): قارن soundsLike مع matchedSound بنفسك — لازم يتطابق مقطع كامل ' +
-  '(مقطعين متتاليين أو أكثر، أو المقطع الرئيسي كله لكلمة قصيرة) بدون تحريف نطق المصطلح، وإلا linkTrue=false. ' +
-  'وتأكد إن الاسم أو العبارة موجودة فعلًا بالمسلسل/الأنمي المذكور، وإلا factTrue=false.\n' +
-  '3) forcedness: NATURAL (أي شخص يشوف الرابط يقول "صح!")، WEAK (صحيح بس يحتاج تبرير)، ' +
-  'FORCED (مصطنع أو محشور).\n' +
-  '4) relationDistance: عدد الخطوات الذهنية فعليًا بين العنصر والمرجع (1 = مباشر).\n' +
-  '5) coversMemoryTarget: هل الرابط يساعد على تذكر الجزء الصعب (memoryTarget) نفسه، مو كلمة جانبية؟\n' +
-  '6) scores من 0 إلى 100: connection (قوة التطابق)، simplicity (يُفهم خلال ثانيتين)، memorability ' +
-  '(مميز ويُتخيل ويساعد على الاسترجاع لاحقًا)، evidence (قابلية التحقق المستقل).\n' +
-  '7) reason: سبب قصير بالعربي.\n' +
-  'أرجع JSON فقط: {"verdicts":[{"id","factTrue":true,"linkTrue":true,"forcedness":"NATURAL|WEAK|FORCED",' +
-  '"relationDistance":1,"coversMemoryTarget":true,"scores":{"connection":0,"simplicity":0,"memorability":0,' +
-  '"evidence":0},"reason":"..."}]} — حكم واحد لكل id.';
+export const REJECT_REASONS: RejectReason[] = [
+  'weak_relation',
+  'hallucination_risk',
+  'too_long',
+  'confusing',
+  'obscure_reference',
+  'forced_interest',
+  'duplicate',
+  'inaccurate',
+  'requires_explanation'
+];
 
-const FORCEDNESS: Forcedness[] = ['NATURAL', 'WEAK', 'FORCED'];
+const SYSTEM_PROMPT =
+  '[AGENT:association_judge] أنت حكم مستقل وصارم لروابط ذاكرة. ما تولّد روابط — تحكم عليها فقط.\n' +
+  'المبدأ: الرابط ينعرض فقط إذا كان واضح وصحيح وقصير ومميز ومفيد. "ممكن" مو كافي — لازم "واضح".\n' +
+  'لكل مرشح أعطِ درجات من 0 إلى 10:\n' +
+  '- directness: قد إيش الرابط مباشر بين عنصر المعلومة والمرجع (10 = نفس الرقم/نفس الصوت/نفس الصفة).\n' +
+  '- familiarity: قد إيش المرجع معروف لطالب جامعي سعودي.\n' +
+  '- memorability: هل بيساعده يتذكر المعلومة نفسها بعد أسبوع.\n' +
+  '- truthfulness: هل evidence والرابط صحيحين حرفيًا (أرقام، أسماء، أحداث). أي شك = أقل من 8. ' +
+  'المرشح اللي فيه verifiedFact=true مبني على حقيقة موثّقة مسبقًا — احكم على الرابط نفسه.\n' +
+  '- simplicity: يُفهم بنظرة؟\n' +
+  '- hallucinationRisk: 0 = مستحيل يكون مختلق، 10 = غالبًا مختلق (شخصية أو حدث أو رقم ما تعرفه بيقين).\n' +
+  'وأجب:\n' +
+  '- twoSecondTest: هل يفهمه الطالب خلال ثانيتين بدون شرح؟\n' +
+  '- obvious: واضح (يقول "آه فهمت!") مو مجرد ممكن؟\n' +
+  '- forcedInterest: (فقط إذا fromInterest=true) هل الرابط موجود بس لأن الطالب يحب هالشي؟\n' +
+  '- phoneticClear: (فقط PHONETIC) انطق soundsLike و matchedSound بنفسك: هل يتطابق مقطع كامل بوضوح ' +
+  'بدون تحريف نطق المصطلح؟ حرف أو حرفين = false.\n' +
+  `- rejectReason: إذا لازم ينرفض، أحد: ${REJECT_REASONS.join('، ')} — وإلا null.\n` +
+  '- reason: سبب قصير بالعربي.\n' +
+  'أرجع JSON فقط: {"verdicts":[{"id":"...","directness":0,"familiarity":0,"memorability":0,"truthfulness":0,' +
+  '"simplicity":0,"hallucinationRisk":0,"twoSecondTest":true,"obvious":true,"forcedInterest":false,' +
+  '"phoneticClear":true,"rejectReason":null,"reason":"..."}]} — حكم واحد لكل id.';
 
 export async function verifyBridges(
   concept: ExtractedConcept,
   memoryTarget: string,
   candidates: BridgeCandidate[],
-  opts: { userId: string }
+  opts: { userId: string; factType: FactType }
 ): Promise<Map<string, BridgeVerdict>> {
   const verdicts = new Map<string, BridgeVerdict>();
   if (candidates.length === 0) return verdicts;
@@ -53,16 +64,18 @@ export async function verifyBridges(
       {
         role: 'user',
         content: JSON.stringify({
-          fact: { atomLabel: concept.atomLabel, title: concept.title, summary: concept.summary },
+          fact: { atomLabel: concept.atomLabel, title: concept.title, summary: concept.summary, factType: opts.factType },
           memoryTarget,
           candidates: candidates.map((c) => ({
             id: c.id,
+            type: c.connectionType,
             anchor: c.anchor,
-            connectionType: c.connectionType,
             worldRef: c.worldRef,
             bridgeLine: c.bridgeLine,
             whyOneLiner: c.whyOneLiner,
             evidence: c.evidence,
+            fromInterest: c.fromInterest === true,
+            verifiedFact: c.interestFactId !== undefined,
             ...(c.phonetic ? { soundsLike: c.phonetic.soundsLike, matchedSound: c.phonetic.matchedSound } : {})
           }))
         })
@@ -70,7 +83,7 @@ export async function verifyBridges(
     ]
   });
 
-  // Mock/offline: verify nothing rather than approve anything unverified.
+  // Mock/offline: judge nothing rather than approve anything unjudged.
   if (result.isMock) return verdicts;
 
   const parsed = parseJsonResponse<{ verdicts?: unknown[] }>(result.text);
@@ -82,27 +95,29 @@ export async function verifyBridges(
   return verdicts;
 }
 
-function normalizeVerdict(raw: unknown): BridgeVerdict | null {
+export function normalizeVerdict(raw: unknown): BridgeVerdict | null {
   const v = raw as Record<string, unknown> | null;
   if (!v || typeof v.id !== 'string') return null;
-  const s = (v.scores ?? {}) as Record<string, unknown>;
-  const score = (x: unknown) => (Number.isFinite(Number(x)) ? Math.max(0, Math.min(100, Number(x))) : 0);
-  const forcedness = String(v.forcedness ?? '').toUpperCase() as Forcedness;
-  const distance = Math.round(Number(v.relationDistance));
+  // Missing scores count as the worst value — the judge has to vouch, not abstain.
+  const score = (x: unknown, worst: number) => {
+    const n = Number(x);
+    return x === null || x === undefined || !Number.isFinite(n) ? worst : Math.max(0, Math.min(10, n));
+  };
+  const reason = String(v.rejectReason ?? '').toLowerCase() as RejectReason;
   return {
     id: v.id,
-    // Anything not explicitly true is treated as false — the verifier has to vouch, not abstain.
-    factTrue: v.factTrue === true,
-    linkTrue: v.linkTrue === true,
-    forcedness: FORCEDNESS.includes(forcedness) ? forcedness : 'FORCED',
-    relationDistance: Number.isFinite(distance) && distance > 0 ? distance : 9,
-    coversMemoryTarget: v.coversMemoryTarget === true,
-    scores: {
-      connection: score(s.connection),
-      simplicity: score(s.simplicity),
-      memorability: score(s.memorability),
-      evidence: score(s.evidence)
-    },
+    directness: score(v.directness, 0),
+    familiarity: score(v.familiarity, 0),
+    memorability: score(v.memorability, 0),
+    truthfulness: score(v.truthfulness, 0),
+    simplicity: score(v.simplicity, 0),
+    hallucinationRisk: score(v.hallucinationRisk, 10),
+    twoSecondTest: v.twoSecondTest === true,
+    obvious: v.obvious === true,
+    // Only a clear "no" clears a candidate of being forced or of an unclear sound match.
+    forcedInterest: v.forcedInterest !== false,
+    phoneticClear: v.phoneticClear === true,
+    rejectReason: REJECT_REASONS.includes(reason) ? reason : null,
     reason: typeof v.reason === 'string' ? v.reason : ''
   };
 }

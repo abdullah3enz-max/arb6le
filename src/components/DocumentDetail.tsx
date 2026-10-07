@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ProcessingSteps } from './ProcessingSteps';
 import { ConnectionCard, type ConnectionCardData } from './ConnectionCard';
+import { SECTIONS, TYPE_LABEL, associationTypeOf, confidenceOf, sectionOf } from '@/lib/associations/sections';
 import { TiltCard } from './TiltCard';
 
 const WORLD_EMOJI: Record<string, string> = {
@@ -33,6 +34,7 @@ interface ConnectionRow {
   whyOneLiner: string;
   claimType: 'FACT' | 'ANALOGY' | 'INTERPRETATION';
   score: number;
+  scoreBreakdown: unknown;
   sources: { title: string | null; sourceType: string }[];
 }
 
@@ -65,7 +67,9 @@ function toCardData(concept: ConceptRow, connection: ConnectionRow): ConnectionC
     bridgeLine: connection.bridgeLine,
     whyOneLiner: connection.whyOneLiner,
     claimType: connection.claimType,
-    badge: connection.associationLevel === 'PHONETIC' ? '🔊 تشابه صوتي' : undefined
+    badge: [TYPE_LABEL[associationTypeOf(connection.scoreBreakdown, connection.associationLevel)], confidenceOf(connection.scoreBreakdown)]
+      .filter(Boolean)
+      .join(' · ')
   };
 }
 
@@ -227,13 +231,21 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
     );
   }
 
+  // One fact → one association: the newest approved one. Grouped by association type, and a
+  // section with nothing in it is simply not rendered.
   const withConnection = concepts
     .filter((c) => c.connections.length > 0)
-    .map((c) => ({ concept: c, connection: c.connections[0]! }))
+    .map((c) => {
+      const connection = c.connections[0]!;
+      const type = associationTypeOf(connection.scoreBreakdown, connection.associationLevel);
+      return { concept: c, connection, section: sectionOf(type, connection.worldCategory) };
+    })
     .sort((a, b) => b.connection.score - a.connection.score);
   const withoutConnection = concepts.filter((c) => c.connections.length === 0);
-  const topLinks = withConnection.slice(0, 5);
-  const reviewLater = withConnection.slice(5);
+  const sections = SECTIONS.map((section) => ({
+    ...section,
+    items: withConnection.filter((w) => w.section === section.key)
+  })).filter((section) => section.items.length > 0);
 
   return (
     <div className="space-y-10">
@@ -260,7 +272,7 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
         </div>
         {rebuildError && <p className="mt-2 text-xs font-semibold text-accent-600">{rebuildError}</p>}
         <p className="mt-1 text-ink-500">
-          وجدنا {concepts.length} معلومة مهمة، وسوّينا {withConnection.length} رابط ذاكرة شخصي لك.
+          وجدنا {concepts.length} معلومة مهمة، ولقينا رابط واضح وقوي لـ {withConnection.length} منها.
         </p>
         {quizzes[0] && quizzes[0].questions.length > 0 ? (
           <Link href={`/quiz/${quizzes[0].id}`} className="mt-3 inline-block rounded-full bg-accent-500 px-5 py-2 text-sm font-bold text-white">
@@ -282,10 +294,10 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
 
       <MindMap concepts={concepts} />
 
-      {topLinks.length > 0 && (
-        <Section title="🔥 أفضل الروابط">
+      {sections.map((section) => (
+        <Section key={section.key} title={section.title}>
           <div className="grid gap-4 md:grid-cols-2">
-            {topLinks.map(({ concept, connection }) => (
+            {section.items.map(({ concept, connection }) => (
               <div key={connection.id}>
                 <ConnectionCard
                   data={toCardData(concept, connection)}
@@ -297,7 +309,7 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
                   }}
                   onDifferentInterest={() => regenerate(connection.id, true)}
                 />
-                {busyConnectionId === connection.id && <p className="mt-1.5 px-1 text-xs text-ink-400">نبحث عن رابط ثاني...</p>}
+                {busyConnectionId === connection.id && <p className="mt-1.5 px-1 text-xs text-ink-400">نجيب لك رابط ثاني...</p>}
                 {actionMessage[connection.id] && (
                   <p className="mt-1.5 px-1 text-xs font-semibold text-ink-400">{actionMessage[connection.id]}</p>
                 )}
@@ -305,10 +317,10 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
             ))}
           </div>
         </Section>
-      )}
+      ))}
 
       {withoutConnection.length > 0 && (
-        <Section title="🧠 تحتاج حفظ">
+        <Section title="📌 تحتاج حفظ مباشر">
           <p className="-mt-3 mb-3 text-xs leading-relaxed text-ink-400">
             ما لقينا لها رابط ذاكرة قوي وصادق — فما اخترعنا لك واحد. صارت بطاقة تعليمية جاهزة تحفظها مباشرة.
           </p>
@@ -338,23 +350,6 @@ export function DocumentDetail({ documentId }: { documentId: string }) {
         </Section>
       )}
 
-      {reviewLater.length > 0 && (
-        <Section title="📝 راجعها لاحقًا">
-          <div className="space-y-3">
-            {reviewLater.map(({ concept, connection }) => (
-              <div key={concept.id} className="flex items-center gap-3 rounded-xl2 border border-ink-100 bg-surface p-4">
-                <span className="text-lg">{connection.atomEmoji}</span>
-                <div>
-                  <p className="font-bold text-ink-900">{connection.atomLabel || concept.title}</p>
-                  <p className="text-sm text-ink-500">
-                    {WORLD_EMOJI[connection.worldCategory] ?? '✨'} {connection.bridgeLine}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
     </div>
   );
 }

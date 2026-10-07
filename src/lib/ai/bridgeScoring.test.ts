@@ -1,42 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { baseScore, BRIDGE_SCORE_THRESHOLD, domainBonus, gateVerdict, personalizationBonus } from './bridgeScoring';
+import {
+  QUALITY_THRESHOLD,
+  confidenceLabel,
+  finalScore,
+  gateVerdict,
+  lowQualityReason,
+  preGate,
+  preference,
+  quality,
+  wordCount
+} from './bridgeScoring';
 import type { BridgeCandidate, BridgeVerdict, UserMemoryProfile } from './types';
 
-function verdict(overrides: Partial<BridgeVerdict> = {}): BridgeVerdict {
-  return {
-    id: 'c1',
-    factTrue: true,
-    linkTrue: true,
-    forcedness: 'NATURAL',
-    relationDistance: 1,
-    coversMemoryTarget: true,
-    scores: { connection: 90, simplicity: 90, memorability: 90, evidence: 90 },
-    reason: 'ok',
-    ...overrides
-  };
-}
+const candidate = (extra: Partial<BridgeCandidate> = {}): BridgeCandidate => ({
+  id: 'c1',
+  anchor: '7',
+  connectionType: 'NUMERIC',
+  worldCategory: 'FOOTBALL',
+  worldRef: 'Cristiano Ronaldo',
+  atomEmoji: '💊',
+  bridgeLine: '7 mg → Ronaldo #7',
+  whyOneLiner: 'his shirt number',
+  evidence: 'Ronaldo wears 7',
+  confidence: 0.95,
+  relationDistance: 1,
+  ...extra
+});
 
-function candidate(overrides: Partial<BridgeCandidate> = {}): BridgeCandidate {
-  return {
-    id: 'c1',
-    anchor: '7',
-    connectionType: 'NUMERIC',
-    worldCategory: 'FOOTBALL',
-    worldRef: 'Some Player',
-    atomEmoji: '💉',
-    bridgeLine: '7 ← X',
-    whyOneLiner: '',
-    evidence: 'X is 7',
-    confidence: 0.95,
-    relationDistance: 1,
-    ...overrides
-  };
-}
+const verdict = (extra: Partial<BridgeVerdict> = {}): BridgeVerdict => ({
+  id: 'c1',
+  directness: 9,
+  familiarity: 9,
+  memorability: 9,
+  truthfulness: 10,
+  simplicity: 9,
+  hallucinationRisk: 0,
+  twoSecondTest: true,
+  obvious: true,
+  forcedInterest: false,
+  phoneticClear: true,
+  rejectReason: null,
+  reason: 'ok',
+  ...extra
+});
 
 const profile: UserMemoryProfile = {
-  preferredWorlds: ['FOOTBALL', 'SERIES'],
+  preferredWorlds: ['FOOTBALL'],
   favoriteTeams: [],
-  favoritePlayers: ['Some Player'],
+  favoritePlayers: ['Cristiano Ronaldo'],
   favoriteShows: [],
   favoriteMovies: [],
   favoriteAnime: [],
@@ -48,52 +59,104 @@ const profile: UserMemoryProfile = {
   weights: {}
 };
 
-describe('gateVerdict', () => {
-  it('passes a natural, true, direct bridge', () => {
-    expect(gateVerdict(verdict())).toBeNull();
+describe('preGate (no model needed)', () => {
+  it('passes a one-glance number association whose number is in the fact', () => {
+    expect(preGate(candidate(), 'Dose = 7 mg')).toBeNull();
   });
 
-  it('rejects a false fact however well it scores', () => {
-    expect(gateVerdict(verdict({ factTrue: false }))).not.toBeNull();
+  it('rejects a number association whose number is not in the fact', () => {
+    expect(preGate(candidate({ bridgeLine: '10 → Messi #10', anchor: '10' }), 'Dose = 7 mg')?.code).toBe('inaccurate');
   });
 
-  it('rejects forced and far-fetched bridges', () => {
-    expect(gateVerdict(verdict({ forcedness: 'FORCED' }))).not.toBeNull();
-    expect(gateVerdict(verdict({ relationDistance: 5 }))).not.toBeNull();
-  });
-});
-
-describe('baseScore', () => {
-  it('penalizes a bridge that misses the part of the fact the student must remember', () => {
-    expect(baseScore(verdict({ coversMemoryTarget: false }))).toBeLessThan(baseScore(verdict()));
+  it('rejects a line that needs reading instead of a glance', () => {
+    const long = '7 mg can be remembered by imagining Cristiano Ronaldo scoring seven goals';
+    expect(preGate(candidate({ bridgeLine: long }), '7 mg')?.code).toBe('too_long');
   });
 
-  it('prefers a 1-step bridge over a 3-step one', () => {
-    expect(baseScore(verdict({ relationDistance: 3 }))).toBeLessThan(baseScore(verdict({ relationDistance: 1 })));
-  });
-});
-
-describe('personalizationBonus', () => {
-  it('never exceeds 5 points', () => {
-    expect(personalizationBonus(candidate(), { ...profile, weights: { 'world:football': 50 } })).toBe(5);
-  });
-
-  it('is 0 for a reference outside every interest', () => {
-    expect(personalizationBonus(candidate({ worldCategory: 'DAILY_LIFE', worldRef: 'A kettle' }), profile)).toBe(0);
+  it('allows MINI_STORY one short sentence, never a story', () => {
+    const one = candidate({ connectionType: 'MINI_STORY', bridgeLine: 'الملح حارس الأكل من أيام الأجداد' });
+    expect(preGate(one, 'Salt')).toBeNull();
+    const story = candidate({
+      connectionType: 'MINI_STORY',
+      bridgeLine: 'كان فيه تاجر قديم. حط الملح على السمك. وصل السمك سليم بعد أسابيع من السفر الطويل'
+    });
+    expect(preGate(story, 'Salt')?.code).toBe('too_long');
   });
 
-  it('cannot lift a weak bridge over the threshold on its own', () => {
-    const weak = baseScore(verdict({ scores: { connection: 50, simplicity: 60, memorability: 50, evidence: 60 } }));
-    expect(weak).toBeLessThan(BRIDGE_SCORE_THRESHOLD);
-    expect(weak + personalizationBonus(candidate(), profile)).toBeLessThan(BRIDGE_SCORE_THRESHOLD);
+  it('rejects a sound-alike claim without the two sounds to compare', () => {
+    expect(preGate(candidate({ connectionType: 'PHONETIC', bridgeLine: 'Salt → سلطة' }), 'Salt')?.code).toBe('weak_relation');
+    const ok = candidate({
+      connectionType: 'PHONETIC',
+      bridgeLine: 'Salt → سلطة',
+      phonetic: { term: 'Salt', soundsLike: 'سولت', matchedSound: 'سلط' }
+    });
+    expect(preGate(ok, 'Salt')).toBeNull();
+  });
+
+  it('counts words without the arrow', () => {
+    expect(wordCount('7 mg → Ronaldo #7')).toBe(4);
   });
 });
 
-describe('domainBonus', () => {
-  it('prefers series/anime and sound-alike bridges by at most 5 points', () => {
-    expect(domainBonus(candidate({ worldCategory: 'ANIME', connectionType: 'PHONETIC' }))).toBe(5);
-    expect(domainBonus(candidate({ worldCategory: 'SERIES', connectionType: 'NUMERIC' }))).toBe(3);
-    expect(domainBonus(candidate({ worldCategory: 'DAILY_LIFE', connectionType: 'PHONETIC' }))).toBe(2);
-    expect(domainBonus(candidate({ worldCategory: 'GENERAL_KNOWLEDGE', connectionType: 'NUMERIC' }))).toBe(0);
+describe('gateVerdict (the judge’s hard gates)', () => {
+  it('passes a clean verdict', () => {
+    expect(gateVerdict(candidate(), verdict())).toBeNull();
+  });
+
+  it.each([
+    [{ truthfulness: 6 }, 'inaccurate'],
+    [{ hallucinationRisk: 5 }, 'hallucination_risk'],
+    [{ twoSecondTest: false }, 'requires_explanation'],
+    [{ obvious: false }, 'weak_relation'],
+    [{ rejectReason: 'obscure_reference' as const }, 'obscure_reference']
+  ])('rejects %o as %s', (v, code) => {
+    expect(gateVerdict(candidate(), verdict(v))?.code).toBe(code);
+  });
+
+  it('rejects a forced interest only when it came from the interests', () => {
+    expect(gateVerdict(candidate({ fromInterest: true }), verdict({ forcedInterest: true }))?.code).toBe('forced_interest');
+    expect(gateVerdict(candidate({ fromInterest: false }), verdict({ forcedInterest: true }))).toBeNull();
+  });
+
+  it('rejects an unclear sound match', () => {
+    const c = candidate({ connectionType: 'PHONETIC', phonetic: { term: 'Vinegar', soundsLike: 'فينيقر', matchedSound: 'في' } });
+    expect(gateVerdict(c, verdict({ phoneticClear: false }))?.code).toBe('weak_relation');
+  });
+});
+
+describe('quality, preference and the 80/20 rank', () => {
+  it('maps judge scores to 0-1 quality, with the confidence bands', () => {
+    expect(quality(verdict())).toBeCloseTo(0.92, 2);
+    expect(confidenceLabel(0.96)).toBe('ممتاز');
+    expect(confidenceLabel(0.86)).toBe('قوي');
+    expect(confidenceLabel(0.76)).toBe('مقبول');
+  });
+
+  it('names the weakest score when quality is too low', () => {
+    expect(lowQualityReason(verdict({ familiarity: 2 }))).toBe('obscure_reference');
+    expect(lowQualityReason(verdict({ simplicity: 1 }))).toBe('confusing');
+  });
+
+  it('preference is 0-1 and only worth 20%', () => {
+    const p = preference(candidate(), profile, 'NUMBER');
+    expect(p).toBeGreaterThan(0.5);
+    expect(p).toBeLessThanOrEqual(1);
+    expect(finalScore(0.9, 0)).toBeCloseTo(0.72, 3);
+    expect(finalScore(0.9, 1)).toBeCloseTo(0.92, 3);
+  });
+
+  it('a general association beats a much weaker personal one, a close personal one wins', () => {
+    const general = finalScore(0.95, 0);
+    expect(finalScore(0.7, 1)).toBeLessThanOrEqual(general);
+    expect(finalScore(0.9, 0.85)).toBeGreaterThan(general);
+  });
+
+  it('the student’s 👎 history on a type lowers its preference', () => {
+    const disliked = { ...profile, weights: { 'association_type:numeric': -30 } };
+    expect(preference(candidate(), disliked, 'NUMBER')).toBeLessThan(preference(candidate(), profile, 'NUMBER'));
+  });
+
+  it('threshold is 0.70 by default', () => {
+    expect(QUALITY_THRESHOLD).toBe(0.7);
   });
 });

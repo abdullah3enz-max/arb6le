@@ -95,37 +95,75 @@ export interface Anchor {
   relevance: number;
 }
 
-export type BridgeConnectionType =
-  | 'DIRECT'
-  | 'NUMERIC'
-  | 'MEASUREMENT'
-  | 'PHONETIC'
-  | 'SEMANTIC'
-  | 'STRUCTURAL'
-  | 'VISUAL'
-  | 'NARRATIVE'
-  | 'POP_CULTURE'
-  | 'SPORTS'
-  | 'EVERYDAY';
+/**
+ * The fact's own shape, decided before any association is searched. It decides which
+ * association types are even allowed (a number bridge needs a number) — see factTypes.ts.
+ */
+export type FactType =
+  | 'NUMBER'
+  | 'NAME'
+  | 'TERM'
+  | 'ENGLISH_WORD'
+  | 'ACRONYM'
+  | 'LIST'
+  | 'PROCESS'
+  | 'CONCEPT'
+  | 'LOCATION'
+  | 'TIME'
+  | 'CAUSE_EFFECT'
+  | 'OTHER';
 
-/** One discovered bridge, always anchored on an element of the fact — never on the student. */
+/**
+ * The association types A-H. No type is "first" in general: every allowed type competes and the
+ * judge's scores pick the winner. MINI_STORY is the last resort and is capped at one short sentence.
+ */
+export type BridgeConnectionType =
+  | 'NUMERIC' // A: 7 mg → Ronaldo #7
+  | 'PHONETIC' // B: Salt → سلطة
+  | 'VISUAL' // C: Spider → Spider-Man
+  | 'CHARACTER' // D: Detective → Sherlock Holmes
+  | 'SCENE' // E: a real, famous scene/event/place/object from a work
+  | 'WORD' // F: the new word → a word the student already knows
+  | 'CONCEPTUAL' // G: a clearly similar everyday concept
+  | 'MINI_STORY'; // H: last resort, one very short sentence
+export type AssociationType = BridgeConnectionType;
+
+/** Internal rejection codes — never shown to the student, kept for debugging and benchmarks. */
+export type RejectReason =
+  | 'weak_relation'
+  | 'hallucination_risk'
+  | 'too_long'
+  | 'confusing'
+  | 'obscure_reference'
+  | 'forced_interest'
+  | 'duplicate'
+  | 'inaccurate'
+  | 'requires_explanation';
+
+/** One discovered association, always anchored on an element of the fact. */
 export interface BridgeCandidate {
   id: string;
   anchor: string;
   connectionType: BridgeConnectionType;
   worldCategory: WorldCategory;
+  /** The familiar thing: "Cristiano Ronaldo", "سلطة". */
   worldRef: string;
   atomEmoji: string;
+  /** The whole association at one glance: "7 → Ronaldo #7". */
   bridgeLine: string;
   whyOneLiner: string;
-  /** The external, independently checkable fact the bridge relies on. */
+  /** The external, independently checkable fact the association relies on. */
   evidence: string;
   /** Discovery's own certainty that `evidence` is literally true (0-1). */
   confidence: number;
   /** Logical steps between the anchor and the reference (1 = direct). */
   relationDistance: number;
-  /** PHONETIC bridges only: the term, how it sounds in Arabic letters, and the reference's matching sound. */
+  /** PHONETIC only: the term, how it sounds in Arabic letters, and the reference's matching sound. */
   phonetic?: PhoneticMatch;
+  /** True when it came from the student's own interests — the judge checks it wasn't forced. */
+  fromInterest?: boolean;
+  /** Set when the association rests on a retrieved, verified interest fact (no model memory). */
+  interestFactId?: string;
 }
 
 export interface PhoneticMatch {
@@ -134,27 +172,35 @@ export interface PhoneticMatch {
   matchedSound: string;
 }
 
-export type Forcedness = 'NATURAL' | 'WEAK' | 'FORCED';
-
-/** The independent verifier's judgment of one candidate. Never sees the student's interests. */
+/** The independent judge's view of one candidate (all scores 0-10). */
 export interface BridgeVerdict {
   id: string;
-  factTrue: boolean;
-  linkTrue: boolean;
-  forcedness: Forcedness;
-  relationDistance: number;
-  coversMemoryTarget: boolean;
-  scores: { connection: number; simplicity: number; memorability: number; evidence: number };
+  directness: number;
+  familiarity: number;
+  memorability: number;
+  truthfulness: number;
+  simplicity: number;
+  /** 0 = none, 10 = almost certainly made up. */
+  hallucinationRisk: number;
+  /** Would a student get it within 2 seconds, without an explanation? */
+  twoSecondTest: boolean;
+  /** Obvious, not merely possible. */
+  obvious: boolean;
+  /** Only "works" because it's the student's favourite thing. */
+  forcedInterest: boolean;
+  /** PHONETIC only: is the sound match clear (a full chunk, not a letter or two)? */
+  phoneticClear: boolean;
+  rejectReason: RejectReason | null;
   reason: string;
 }
 
 export interface ScoredBridge {
   candidate: BridgeCandidate;
   verdict: BridgeVerdict;
-  baseScore: number;
-  /** 0-5 at most, added only after the quality gate — never rescues a weak bridge. */
-  personalization: number;
-  /** 0-5 at most: product-level preference for series/anime and sound-alike bridges, same rule as personalization. */
-  domainBonus: number;
-  score: number;
+  /** 0-1 association quality from the judge alone; must clear the threshold on its own. */
+  quality: number;
+  /** 0-1 personal preference; only reorders associations that already passed. */
+  preference: number;
+  /** 0.8 × quality + 0.2 × preference. */
+  final: number;
 }

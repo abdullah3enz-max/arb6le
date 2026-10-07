@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InterestFactRow } from './agents/interestRetriever';
 import type { ExtractedConcept, UserMemoryProfile } from './types';
 
-// Stub only the model call; JSON parsing and everything else runs for real.
+// Stub only the model call; JSON parsing, gates, scoring and ranking all run for real.
 const routedComplete = vi.fn();
 vi.mock('@/lib/ai/router', async () => {
   const actual = await vi.importActual<typeof import('@/lib/ai/router')>('@/lib/ai/router');
@@ -10,20 +11,23 @@ vi.mock('@/lib/ai/router', async () => {
 
 const { findBridges } = await import('./bridgeEngine');
 
-const concept: ExtractedConcept = {
-  title: 'Heart chambers',
-  summary: 'The human heart has four chambers.',
-  atomLabel: '4 chambers',
-  atomEmoji: '🫀',
+const concept = (atomLabel: string, summary: string, conceptType: ExtractedConcept['conceptType'] = 'DEFINITION'): ExtractedConcept => ({
+  title: atomLabel,
+  summary,
+  atomLabel,
+  atomEmoji: '🧂',
   importance: 90,
-  conceptType: 'DEFINITION',
+  conceptType,
   sourcePageNumbers: [1]
-};
+});
+const SALT = concept('Salt', 'Salt is one of the oldest food preservatives.');
+const DOSE = concept('7 mg', 'The usual dose is 7 mg.');
+const HYPERTENSION = concept('Hypertension', 'Persistently high blood pressure.', 'TERMINOLOGY');
 
-const profile: UserMemoryProfile = {
-  preferredWorlds: ['FOOTBALL'],
+const emptyProfile: UserMemoryProfile = {
+  preferredWorlds: [],
   favoriteTeams: [],
-  favoritePlayers: ['Star Striker'],
+  favoritePlayers: [],
   favoriteShows: [],
   favoriteMovies: [],
   favoriteAnime: [],
@@ -34,11 +38,25 @@ const profile: UserMemoryProfile = {
   connectionStyles: [],
   weights: {}
 };
+const footballFan: UserMemoryProfile = { ...emptyProfile, preferredWorlds: ['FOOTBALL'], favoritePlayers: ['Star Striker'] };
+const animeFan: UserMemoryProfile = { ...emptyProfile, preferredWorlds: ['ANIME'], favoriteAnime: ['Pirate Show'] };
 
+const strikerNumber: InterestFactRow = {
+  id: 'f1',
+  interest: 'Star Striker',
+  worldCategory: 'FOOTBALL',
+  kind: 'NUMBER',
+  subject: 'Star Striker',
+  attribute: 'shirt number',
+  value: '7',
+  shortForm: 'Striker #7',
+  confidence: 0.98
+};
+
+type Agent = 'connection_finder' | 'phonetic_finder' | 'interest_finder' | 'connection_critic';
 const reply = (obj: unknown) => ({ text: JSON.stringify(obj), model: 'stub', inputTokens: 0, outputTokens: 0, isMock: false });
 
-type Agent = 'connection_finder' | 'sound_screen_finder' | 'connection_critic';
-/** Discovery passes run in parallel, so answer by agent name, in order per agent. */
+/** The discovery passes run in parallel, so the stub answers by agent name, in order per agent. */
 function script(replies: Partial<Record<Agent, unknown[]>>) {
   const queues = Object.fromEntries(Object.entries(replies).map(([k, v]) => [k, [...v!]]));
   routedComplete.mockImplementation(async (args: { agent: Agent }) => {
@@ -50,15 +68,15 @@ function script(replies: Partial<Record<Agent, unknown[]>>) {
 const callsFor = (agent: Agent) =>
   routedComplete.mock.calls.map((c) => c[0] as { agent: Agent; messages: { content: string }[] }).filter((c) => c.agent === agent);
 
-const candidate = (worldRef: string, extra: Record<string, unknown> = {}) => ({
-  anchor: '4',
-  connectionType: 'NUMERIC',
-  worldCategory: 'GENERAL_KNOWLEDGE',
+const cand = (worldRef: string, extra: Record<string, unknown> = {}) => ({
+  anchor: 'Salt',
+  connectionType: 'CONCEPTUAL',
+  worldCategory: 'DAILY_LIFE',
   worldRef,
-  atomEmoji: '🫀',
-  bridgeLine: `4 ← ${worldRef}`,
-  whyOneLiner: 'same count',
-  evidence: `${worldRef} has 4 parts`,
+  atomEmoji: '🧂',
+  bridgeLine: `Salt → ${worldRef}`,
+  whyOneLiner: 'short',
+  evidence: `${worldRef} is real`,
   confidence: 0.95,
   relationDistance: 1,
   ...extra
@@ -66,160 +84,159 @@ const candidate = (worldRef: string, extra: Record<string, unknown> = {}) => ({
 
 const verdict = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
-  factTrue: true,
-  linkTrue: true,
-  forcedness: 'NATURAL',
-  relationDistance: 1,
-  coversMemoryTarget: true,
-  scores: { connection: 90, simplicity: 90, memorability: 90, evidence: 90 },
+  directness: 9,
+  familiarity: 9,
+  memorability: 9,
+  truthfulness: 10,
+  simplicity: 9,
+  hallucinationRisk: 0,
+  twoSecondTest: true,
+  obvious: true,
+  forcedInterest: false,
+  phoneticClear: true,
+  rejectReason: null,
   reason: 'ok',
   ...extra
 });
 
-describe('findBridges (anchor-first engine)', () => {
+describe('core association engine', () => {
   beforeEach(() => {
     routedComplete.mockReset();
   });
 
-  it('rejects false facts and forced links, keeps the real bridge, and never lets personalization rescue a weak one', async () => {
+  it('Salt → سلطة: the clear sound match wins; forced, long and number-shaped ones never get through', async () => {
     script({
       connection_finder: [
         {
-          memoryTarget: '4 chambers',
-          anchors: [{ text: '4', kind: 'NUMBER', relevance: 0.95 }],
+          factType: 'ENGLISH_WORD',
+          memoryTarget: 'Salt',
+          anchors: [{ text: 'Salt', kind: 'TERM', relevance: 1 }],
           candidates: [
-            candidate('Four Seasons'), // real, universal
-            candidate('Made-up Band', { evidence: 'Made-up Band has 4 members' }), // verifier: false fact
-            candidate('Star Striker', { connectionType: 'SPORTS', worldCategory: 'FOOTBALL', evidence: 'plays with heart' }), // forced
-            candidate('Card Suits', { confidence: 0.3 }), // dropped before verification (low confidence)
-            candidate('Weak Personal', { worldCategory: 'FOOTBALL' }) // passes gates, scores low
+            cand('Famous Player', { connectionType: 'CHARACTER', worldCategory: 'FOOTBALL', bridgeLine: 'Salt → Famous Player' }),
+            cand('Number Seven', { connectionType: 'NUMERIC', bridgeLine: 'Salt → 7' }), // no number in the fact
+            cand('Long Story', {
+              connectionType: 'CONCEPTUAL',
+              bridgeLine: 'Salt reminds you of the old merchants who kept fish on long trips'
+            })
+          ]
+        }
+      ],
+      phonetic_finder: [
+        {
+          candidates: [
+            cand('سلطة', {
+              connectionType: 'PHONETIC',
+              bridgeLine: 'Salt → سلطة',
+              soundsLike: 'سولت',
+              matchedSound: 'سلط'
+            })
+          ]
+        }
+      ],
+      connection_critic: [{ verdicts: [verdict('r1p1', { directness: 10, simplicity: 10 }), verdict('r1c1', { obvious: false, reason: 'possible, not obvious' })] }]
+    });
+
+    const result = await findBridges(SALT, emptyProfile, { userId: 'u1' });
+
+    expect(result.factType).toBe('ENGLISH_WORD');
+    expect(result.accepted.map((a) => a.candidate.bridgeLine)).toEqual(['Salt → سلطة']);
+    const codes = Object.fromEntries(result.rejected.map((r) => [r.candidate.worldRef, r.code]));
+    expect(codes).toEqual({ 'Number Seven': 'weak_relation', 'Long Story': 'too_long', 'Famous Player': 'weak_relation' });
+    // Number-shaped and too-long candidates were stopped before costing a judge slot.
+    const judged = callsFor('connection_critic')[0]!.messages[1]!.content;
+    expect(judged).not.toContain('Number Seven');
+    expect(judged).not.toContain('Long Story');
+    // No interest pass for a student without interests.
+    expect(callsFor('interest_finder')).toHaveLength(0);
+  });
+
+  it('7 mg → Striker #7: built straight from a retrieved, verified interest fact, not from model memory', async () => {
+    script({
+      connection_finder: [{ factType: 'NUMBER', memoryTarget: '7', anchors: [], candidates: [] }],
+      connection_critic: [{ verdicts: [verdict('r1n1', { directness: 10, familiarity: 10, simplicity: 10, memorability: 10 })] }]
+    });
+
+    const result = await findBridges(DOSE, footballFan, { userId: 'u1', interestFacts: [strikerNumber] });
+
+    const top = result.accepted[0]!;
+    expect(top.candidate.bridgeLine).toBe('7 → Striker #7');
+    expect(top.candidate.interestFactId).toBe('f1');
+    expect(top.quality).toBeGreaterThanOrEqual(0.95);
+    // The interests reach only the interest pass — never the general pass or the judge.
+    expect(JSON.stringify(callsFor('connection_finder')[0]!.messages)).not.toContain('Star Striker');
+    expect(JSON.stringify(callsFor('interest_finder')[0]!.messages)).toContain('Star Striker');
+    const judged = JSON.parse(callsFor('connection_critic')[0]!.messages[1]!.content);
+    expect(judged.candidates[0]).toMatchObject({ fromInterest: true, verifiedFact: true });
+  });
+
+  it('Hypertension → a favourite anime character just because the student likes it: rejected, honest empty result', async () => {
+    script({
+      interest_finder: [
+        {
+          candidates: [
+            cand('Pirate Captain', {
+              anchor: 'Hypertension',
+              connectionType: 'CHARACTER',
+              worldCategory: 'ANIME',
+              bridgeLine: 'Hypertension → Pirate Captain'
+            })
+          ]
+        }
+      ],
+      connection_critic: [{ verdicts: [verdict('r1i1', { forcedInterest: true, reason: 'only because they like the show' })] }]
+    });
+
+    const result = await findBridges(HYPERTENSION, animeFan, { userId: 'u1' });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rounds).toBe(2);
+    expect(result.rejected.find((r) => r.candidate.worldRef === 'Pirate Captain')?.code).toBe('forced_interest');
+    // Round 2 is told why round 1 failed.
+    expect(callsFor('connection_finder')[1]!.messages[0]!.content).toMatch(/جولة توسيع[\s\S]*forced_interest/);
+  });
+
+  it('preference (20%) never rescues a weak association, but decides between two good ones', async () => {
+    script({
+      connection_finder: [{ factType: 'ENGLISH_WORD', memoryTarget: 'Salt', anchors: [], candidates: [cand('Sea Water', { connectionType: 'VISUAL' })] }],
+      interest_finder: [
+        {
+          candidates: [
+            cand('Pirate Show', { connectionType: 'SCENE', worldCategory: 'ANIME', bridgeLine: 'Salt → Pirate Show sea' }),
+            cand('Pirate Show Cook', { connectionType: 'CHARACTER', worldCategory: 'ANIME', bridgeLine: 'Salt → the cook' })
           ]
         }
       ],
       connection_critic: [
         {
           verdicts: [
-            verdict('r1c1'),
-            verdict('r1c2', { factTrue: false, reason: 'wrong count' }),
-            verdict('r1c3', { forcedness: 'FORCED', linkTrue: false }),
-            verdict('r1c5', { scores: { connection: 50, simplicity: 60, memorability: 50, evidence: 60 } })
+            verdict('r1c1', { directness: 8, familiarity: 9, memorability: 8, simplicity: 9 }), // general ≈ 0.88
+            verdict('r1i1', { directness: 3, memorability: 4, simplicity: 5 }), // personal but weak ≈ 0.6
+            verdict('r1i2', { directness: 8, familiarity: 8, memorability: 9, simplicity: 8 }) // personal, good ≈ 0.86
           ]
         }
       ]
     });
 
-    const result = await findBridges(concept, profile, { userId: 'u1' });
+    const result = await findBridges(SALT, animeFan, { userId: 'u1' });
 
-    expect(result.rounds).toBe(1);
-    expect(result.accepted.map((a) => a.candidate.worldRef)).toEqual(['Four Seasons']);
-    expect(result.accepted[0]!.personalization).toBe(0);
-    const reasons = Object.fromEntries(result.rejected.map((r) => [r.candidate.worldRef, r.reason]));
-    expect(Object.keys(reasons).sort()).toEqual(['Card Suits', 'Made-up Band', 'Star Striker', 'Weak Personal']);
-    expect(reasons['Weak Personal']).toMatch(/أقل من الحد/);
-
-    // The verifier never receives the student's interests.
-    expect(JSON.stringify(callsFor('connection_critic')[0]!.messages)).not.toContain('FOOTBALL');
-    expect(JSON.stringify(callsFor('sound_screen_finder')[0]!.messages)).not.toContain('Star Striker');
+    // The weak personal one is rejected on quality alone, whatever the preference.
+    expect(result.rejected.find((r) => r.candidate.worldRef === 'Pirate Show')?.quality).toBeLessThan(0.7);
+    // Two good ones: the personal one earned its place and the 20% puts it first.
+    expect(result.accepted.map((a) => a.candidate.worldRef)).toEqual(['Pirate Show Cook', 'Sea Water']);
+    for (const a of result.accepted) expect(a.final).toBeCloseTo(0.8 * a.quality + 0.2 * a.preference, 3);
   });
 
-  it('expands into a second round, told why round one failed, before giving up', async () => {
-    script({
-      connection_finder: [
-        { memoryTarget: '4 chambers', anchors: [], candidates: [candidate('Bad One')] },
-        { memoryTarget: '4 chambers', anchors: [], candidates: [candidate('Good One')] }
-      ],
-      connection_critic: [
-        { verdicts: [verdict('r1c1', { factTrue: false, reason: 'not true' })] },
-        { verdicts: [verdict('r2c1')] }
-      ]
-    });
-
-    const result = await findBridges(concept, profile, { userId: 'u1' });
-
-    expect(result.rounds).toBe(2);
-    expect(result.accepted.map((a) => a.candidate.worldRef)).toEqual(['Good One']);
-    const round2Prompt = callsFor('connection_finder')[1]!.messages[0]!.content;
-    expect(round2Prompt).toContain('جولة توسيع'); // told why round one failed
-    expect(round2Prompt).toMatch(/مراجع ممنوعة[^\n]*bad one/i); // and not allowed to retry it
-  });
-
-  it('adds at most 5 personalization points, only to a bridge that already passed', async () => {
-    script({
-      connection_finder: [
-        {
-          memoryTarget: '4 chambers',
-          anchors: [],
-          candidates: [candidate('Star Striker', { worldCategory: 'FOOTBALL' }), candidate('Four Seasons')]
-        }
-      ],
-      connection_critic: [{ verdicts: [verdict('r1c1'), verdict('r1c2')] }]
-    });
-
-    const result = await findBridges(concept, profile, { userId: 'u1' });
-    const personal = result.accepted.find((a) => a.candidate.worldRef === 'Star Striker')!;
-    expect(personal.personalization).toBeGreaterThan(0);
-    expect(personal.personalization).toBeLessThanOrEqual(5);
-    expect(personal.score - personal.baseScore).toBe(personal.personalization + personal.domainBonus);
-  });
-
-  it('honestly returns nothing when no candidate survives either round', async () => {
-    script({});
-
-    const result = await findBridges(concept, profile, { userId: 'u1' });
-    expect(result.accepted).toEqual([]);
-    expect(result.rounds).toBe(2);
-  });
-
-  it('runs the sound & screen pass: sound-alike and series/anime bridges reach the verifier and win ties', async () => {
-    script({
-      connection_finder: [{ memoryTarget: '4 chambers', anchors: [], candidates: [candidate('Four Seasons')] }],
-      sound_screen_finder: [
-        {
-          candidates: [
-            candidate('Quad Squad (Some Anime)', {
-              anchor: 'chambers',
-              connectionType: 'PHONETIC',
-              worldCategory: 'ANIME',
-              soundsLike: 'تشيمبرز',
-              matchedSound: 'تشيمبر'
-            }),
-            // A sound-alike claim with no sounds to compare is unverifiable — never sent.
-            candidate('No Sounds Given', { connectionType: 'PHONETIC', worldCategory: 'SERIES' })
-          ]
-        }
-      ],
-      connection_critic: [{ verdicts: [verdict('r1c1'), verdict('r1s1')] }]
-    });
-
-    const result = await findBridges(concept, profile, { userId: 'u1' });
-
-    // Same verifier scores, but the anime sound-alike is preferred (domain bonus, capped at 5).
-    expect(result.accepted.map((a) => a.candidate.worldRef)).toEqual(['Quad Squad (Some Anime)', 'Four Seasons']);
-    expect(result.accepted[0]!.domainBonus).toBe(5);
-    expect(result.accepted[1]!.domainBonus).toBe(0);
-    expect(result.accepted[0]!.candidate.phonetic).toEqual({ term: 'chambers', soundsLike: 'تشيمبرز', matchedSound: 'تشيمبر' });
-
-    const verifierInput = callsFor('connection_critic')[0]!.messages[1]!.content;
-    expect(verifierInput).toContain('matchedSound');
-    expect(verifierInput).not.toContain('No Sounds Given');
-  });
-
-  it('keeps the general pass when the sound & screen pass fails, and vice versa', async () => {
-    script({
-      connection_finder: [{ memoryTarget: '4 chambers', anchors: [], candidates: [candidate('Four Seasons')] }],
-      sound_screen_finder: [new Error('bad json')],
-      connection_critic: [{ verdicts: [verdict('r1c1')] }]
-    });
-    expect((await findBridges(concept, profile, { userId: 'u1' })).accepted).toHaveLength(1);
-
+  it('one pass failing never loses the others; all failing is an error', async () => {
     script({
       connection_finder: [new Error('bad json')],
-      sound_screen_finder: [{ candidates: [candidate('Some Series Family', { worldCategory: 'SERIES' })] }],
-      connection_critic: [{ verdicts: [verdict('r1s1')] }]
+      phonetic_finder: [
+        { candidates: [cand('سلطة', { connectionType: 'PHONETIC', bridgeLine: 'Salt → سلطة', soundsLike: 'سولت', matchedSound: 'سلط' })] }
+      ],
+      connection_critic: [{ verdicts: [verdict('r1p1')] }]
     });
-    expect((await findBridges(concept, profile, { userId: 'u1' })).accepted).toHaveLength(1);
+    expect((await findBridges(SALT, emptyProfile, { userId: 'u1' })).accepted).toHaveLength(1);
 
-    script({ connection_finder: [new Error('down')], sound_screen_finder: [new Error('down')] });
-    await expect(findBridges(concept, profile, { userId: 'u1' })).rejects.toThrow('down');
+    script({ connection_finder: [new Error('down')], phonetic_finder: [new Error('down')] });
+    await expect(findBridges(SALT, emptyProfile, { userId: 'u1' })).rejects.toThrow('down');
   });
 });

@@ -28,4 +28,9 @@ describe('extractNumericAnchors', () => {
   it('returns nothing for a fact with no numbers', () => {
     expect(texts('Time Gain Compensation adjusts brightness by depth')).toEqual([]);
   });
+
+  it('does not read "one of the" or a number word without a counted noun as a number', () => {
+    expect(texts('Salt is one of the oldest food preservatives.')).toEqual([]);
+    expect(texts('two of the patients')).toEqual([]);
+  });
 });

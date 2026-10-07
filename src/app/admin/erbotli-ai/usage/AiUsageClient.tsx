@@ -43,9 +43,12 @@ interface AiUsageData {
 const AGENT_LABEL: Record<string, string> = {
   concept_extractor: '🧠 استخراج المفاهيم',
   connection_finder: '🔗 البحث عن الروابط',
-  sound_screen_finder: '🔊 تشابه صوتي ومسلسلات وأنمي',
+  phonetic_finder: '🔊 الربط الصوتي والكلمات',
+  interest_finder: '❤️ الربط بالاهتمامات',
+  interest_retriever: '📚 جمع حقائق الاهتمامات',
+  interest_verifier: '✅ تدقيق حقائق الاهتمامات',
   knowledge_mapper: '🧩 ربط المفاهيم ببعضها',
-  connection_critic: '🕵️ نقد الروابط',
+  connection_critic: '⚖️ حكم الروابط',
   quiz_generator: '📝 توليد الاختبارات'
 };
 
