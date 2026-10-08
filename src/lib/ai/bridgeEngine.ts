@@ -115,7 +115,8 @@ export async function findBridges(
       priorRejections
     };
     const wantsSound = allowed.includes('PHONETIC') || allowed.includes('WORD');
-    const wantsInterest = hasInterests(profile);
+    // Runs whenever there is material: the student's interests or the series/anime pool.
+    const wantsInterest = hasInterests(profile) || interestFacts.length > 0;
 
     // Any pass may fail (bad JSON, timeout) without losing the others' candidates.
     const [general, sound, interest] = await Promise.allSettled([

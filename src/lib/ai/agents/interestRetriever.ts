@@ -35,15 +35,17 @@ export interface InterestFactRow {
  * (Data for retrieval, never put into a discovery prompt as an example.)
  */
 const POPULAR_BY_WORLD: Partial<Record<WorldCategory, string[]>> = {
-  SERIES: ['شباب البومب', 'Money Heist', 'Breaking Bad', 'Prison Break'],
-  ANIME: ['Detective Conan', 'One Piece', 'Naruto', 'Captain Tsubasa'],
+  SERIES: ['شباب البومب', 'Money Heist', 'Breaking Bad', 'Prison Break', 'Game of Thrones'],
+  ANIME: ['Detective Conan', 'One Piece', 'Naruto', 'Captain Tsubasa', 'Attack on Titan'],
   MOVIES: ['Spider-Man', 'The Dark Knight', 'Avengers: Endgame'],
   GAMES: ['FIFA', 'Minecraft', 'Call of Duty']
 };
-const POPULAR_PER_WORLD = 3;
+/** Series and anime get more titles: they're what the student asked to see most. */
+const POPULAR_PER_WORLD: Partial<Record<WorldCategory, number>> = { SERIES: 5, ANIME: 5 };
+const DEFAULT_POPULAR_PER_WORLD = 3;
 
 const FACT_KINDS = ['NUMBER', 'CHARACTER', 'ACTOR', 'ROLE', 'OBJECT', 'LOCATION', 'EVENT', 'ABILITY', 'QUOTE', 'RELATION'];
-const MAX_INTERESTS = 16;
+const MAX_INTERESTS = 20;
 const MIN_CONFIDENCE = 0.8;
 /** Facts about a living person/team (shirt numbers, clubs) go stale — refresh periodically. */
 const REFRESH_DAYS = 90;
@@ -70,11 +72,14 @@ export function interestsOf(profile: UserMemoryProfile): { name: string; world: 
       out.push({ name, world });
     }
   }
-  // Chosen worlds with no named title get well-known titles from that world.
+  // Series and anime are the product's core material, so every student gets well-known titles
+  // from them, chosen or not. Other chosen worlds with no named title get defaults too.
+  // A world where the student named their own titles keeps only those.
   const namedWorlds = new Set(out.map((i) => i.world));
-  for (const world of profile.preferredWorlds as WorldCategory[]) {
+  const worlds = new Set<WorldCategory>(['SERIES', 'ANIME', ...(profile.preferredWorlds as WorldCategory[])]);
+  for (const world of worlds) {
     if (namedWorlds.has(world)) continue;
-    for (const name of (POPULAR_BY_WORLD[world] ?? []).slice(0, POPULAR_PER_WORLD)) {
+    for (const name of (POPULAR_BY_WORLD[world] ?? []).slice(0, POPULAR_PER_WORLD[world] ?? DEFAULT_POPULAR_PER_WORLD)) {
       const key = normalizeRef(name);
       if (seen.has(key)) continue;
       seen.add(key);

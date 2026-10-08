@@ -305,4 +305,14 @@ describe('core association engine', () => {
     expect(result.accepted).toHaveLength(1);
     expect(callsFor('claim_checker')).toHaveLength(0);
   });
+
+  it('a student with no interests still gets the series/anime pass when there is series material', async () => {
+    const seriesFact: InterestFactRow = { ...strikerNumber, id: 's1', interest: 'Some Series', worldCategory: 'SERIES', kind: 'CHARACTER', subject: 'Lead Detective', attribute: 'role', value: 'detective', shortForm: 'the detective' };
+    script({});
+    await findBridges(SALT, emptyProfile, { userId: 'u1', interestFacts: [seriesFact] });
+    const prompt = callsFor('interest_finder')[0]!.messages[1]!.content;
+    expect(prompt).toContain('Lead Detective');
+    expect(prompt).toContain('المسلسلات والأنمي أولوية');
+  });
 });
+

@@ -78,7 +78,7 @@ export function hasInterests(profile: UserMemoryProfile): boolean {
 }
 
 export async function discoverInterestBridges(concept: ExtractedConcept, opts: InterestOptions): Promise<BridgeCandidate[]> {
-  if (!hasInterests(opts.profile)) return [];
+  if (!hasInterests(opts.profile) && opts.facts.length === 0) return [];
 
   // Round-robin across interests so one well-documented interest can't fill the whole list.
   const byInterest = new Map<string, InterestFactRow[]>();
@@ -105,7 +105,8 @@ export async function discoverInterestBridges(concept: ExtractedConcept, opts: I
         role: 'user',
         content:
           factMessage(concept, opts) +
-          `\n\nاهتمامات الطالب:\n${interestSummary(opts.profile)}` +
+          `\n\nاهتمامات الطالب:\n${interestSummary(opts.profile) || 'ما حدد'}` +
+          '\nالمسلسلات والأنمي أولوية: دوّر فيها أول بجدية (شخصيات، مشاهد، عبارات، أرقام)، حتى لو الطالب ما سمّاها.' +
           `\n\nحقائق موثّقة عن الاهتمامات (id | الاهتمام | النوع | الحقيقة):\n${factLines || 'لا يوجد بعد'}`
       }
     ]
