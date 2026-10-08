@@ -33,8 +33,40 @@ export function numbersIn(text: string): string[] {
  * Checks that need no model: a too-long line, a NUMERIC association whose number isn't in the
  * fact, a sound-alike without the two sounds to compare. Returns the reject code or null.
  */
-export function preGate(candidate: BridgeCandidate, factText: string): { code: RejectReason; message: string } | null {
+/** Arabic/English number words (with و/ال prefixes and dialect spellings): "سبعين", "تمانية", "واحد". */
+const NUMBER_WORD =
+  /^(?:و)?(?:ال)?(?:واحد|وحده|اثن|إثن|ثنين|ثلاث|تلات|اربع|أربع|خمس|ست|سبع|ثمان|تمان|تسع|عشر|مي[هة]|مئ[هة]|ألف|الف|نص|ربع)[\p{L}]*$|^(?:one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|percent)$/iu;
+
+/**
+ * "70% → سبعين", "8.3% → تمانية وثلاثة", "واحد → دقة القياس": the "familiar thing" is just the
+ * number said out loud (or a bare unit/percent sign). True, simple — and worthless as a memory hook.
+ */
+export function isTautology(candidate: BridgeCandidate): boolean {
+  const tokens = candidate.worldRef
+    .replace(/[()%٪.,،:;!?'"«»\-–—→←=]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every((t) => /^[\d٠-٩.]+$/.test(t) || NUMBER_WORD.test(t) || /^(?:سم|مم|cm|mm|بالمية|بالمئة)$/i.test(t));
+}
+
+export function preGate(
+  candidate: BridgeCandidate,
+  factText: string,
+  factType?: FactType
+): { code: RejectReason; message: string } | null {
   const line = candidate.bridgeLine;
+  if (isTautology(candidate)) {
+    return { code: 'weak_relation', message: 'المرجع مجرد نطق الرقم نفسه — ما يضيف شي للذاكرة' };
+  }
+  // A number fact must be carried by the association itself: "الغدة → خريطة الجسم" for ">90%"
+  // doesn't help anyone remember 90%.
+  if ((factType === 'NUMBER' || factType === 'TIME') && candidate.connectionType !== 'MINI_STORY') {
+    const factNumbers = numbersIn(factText);
+    if (factNumbers.length && !numbersIn(line).some((n) => factNumbers.includes(n))) {
+      return { code: 'weak_relation', message: 'الرابط ما يحمل رقم المعلومة نفسه' };
+    }
+  }
   if (candidate.connectionType === 'MINI_STORY') {
     const sentences = line.split(/[.!؟?]\s+/).filter((s) => s.trim()).length;
     if (wordCount(line) > MAX_STORY_WORDS || sentences > 1)
@@ -94,6 +126,8 @@ export function gateVerdict(c: BridgeCandidate, v: BridgeVerdict): { code: Rejec
   if (c.fromInterest && v.forcedInterest) return { code: 'forced_interest', message: `اهتمام مُقحم: ${v.reason}` };
   if (c.connectionType === 'PHONETIC' && !v.phoneticClear)
     return { code: 'weak_relation', message: `التشابه الصوتي مو واضح: ${v.reason}` };
+  if (!v.coversFact) return { code: 'weak_relation', message: `ما يحمل المعلومة نفسها: ${v.reason}` };
+  if (!v.specific) return { code: 'obscure_reference', message: `مرجع عام مو محدد: ${v.reason}` };
   if (!v.twoSecondTest) return { code: 'requires_explanation', message: `يحتاج شرح: ${v.reason}` };
   if (!v.obvious) return { code: v.rejectReason ?? 'weak_relation', message: `ممكن بس مو واضح: ${v.reason}` };
   if (v.rejectReason) return { code: v.rejectReason, message: v.reason };

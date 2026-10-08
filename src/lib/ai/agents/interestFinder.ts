@@ -80,8 +80,15 @@ export function hasInterests(profile: UserMemoryProfile): boolean {
 export async function discoverInterestBridges(concept: ExtractedConcept, opts: InterestOptions): Promise<BridgeCandidate[]> {
   if (!hasInterests(opts.profile)) return [];
 
-  const factLines = opts.facts
-    .slice(0, MAX_FACTS_IN_PROMPT)
+  // Round-robin across interests so one well-documented interest can't fill the whole list.
+  const byInterest = new Map<string, InterestFactRow[]>();
+  for (const f of opts.facts) byInterest.set(f.interest, [...(byInterest.get(f.interest) ?? []), f]);
+  const groups = [...byInterest.values()];
+  const mixed: InterestFactRow[] = [];
+  for (let i = 0; mixed.length < MAX_FACTS_IN_PROMPT && groups.some((g) => i < g.length); i++) {
+    for (const g of groups) if (i < g.length && mixed.length < MAX_FACTS_IN_PROMPT) mixed.push(g[i]!);
+  }
+  const factLines = mixed
     .map((f) => `${f.id} | ${f.interest} | ${f.kind} | ${f.subject} — ${f.attribute}: ${f.value} (${f.shortForm})`)
     .join('\n');
 

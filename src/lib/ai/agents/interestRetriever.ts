@@ -27,8 +27,23 @@ export interface InterestFactRow {
   confidence: number;
 }
 
+/**
+ * A student who ticked "series" or "anime" but named no title still needs real material from
+ * that world — otherwise the interest pass only ever sees their one named player. These are
+ * widely known titles among Saudi students, used only for worlds the student chose and left
+ * unnamed. Their facts go through the same retrieval + strict verification as named interests.
+ * (Data for retrieval, never put into a discovery prompt as an example.)
+ */
+const POPULAR_BY_WORLD: Partial<Record<WorldCategory, string[]>> = {
+  SERIES: ['شباب البومب', 'Money Heist', 'Breaking Bad', 'Prison Break'],
+  ANIME: ['Detective Conan', 'One Piece', 'Naruto', 'Captain Tsubasa'],
+  MOVIES: ['Spider-Man', 'The Dark Knight', 'Avengers: Endgame'],
+  GAMES: ['FIFA', 'Minecraft', 'Call of Duty']
+};
+const POPULAR_PER_WORLD = 3;
+
 const FACT_KINDS = ['NUMBER', 'CHARACTER', 'ACTOR', 'ROLE', 'OBJECT', 'LOCATION', 'EVENT', 'ABILITY', 'QUOTE', 'RELATION'];
-const MAX_INTERESTS = 12;
+const MAX_INTERESTS = 16;
 const MIN_CONFIDENCE = 0.8;
 /** Facts about a living person/team (shirt numbers, clubs) go stale — refresh periodically. */
 const REFRESH_DAYS = 90;
@@ -51,6 +66,17 @@ export function interestsOf(profile: UserMemoryProfile): { name: string; world: 
     for (const name of names) {
       const key = normalizeRef(name);
       if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name, world });
+    }
+  }
+  // Chosen worlds with no named title get well-known titles from that world.
+  const namedWorlds = new Set(out.map((i) => i.world));
+  for (const world of profile.preferredWorlds as WorldCategory[]) {
+    if (namedWorlds.has(world)) continue;
+    for (const name of (POPULAR_BY_WORLD[world] ?? []).slice(0, POPULAR_PER_WORLD)) {
+      const key = normalizeRef(name);
+      if (seen.has(key)) continue;
       seen.add(key);
       out.push({ name, world });
     }

@@ -184,6 +184,10 @@ export interface BridgeVerdict {
   hallucinationRisk: number;
   /** Would a student get it within 2 seconds, without an explanation? */
   twoSecondTest: boolean;
+  /** Does it encode the fact itself (its number/term/meaning), not a neighbouring idea? */
+  coversFact: boolean;
+  /** Is the familiar thing concrete and specific (a named thing, scene, word), not a vague category? */
+  specific: boolean;
   /** Obvious, not merely possible. */
   obvious: boolean;
   /** Only "works" because it's the student's favourite thing. */

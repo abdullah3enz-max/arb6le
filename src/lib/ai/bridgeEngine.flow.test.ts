@@ -99,6 +99,8 @@ const verdict = (id: string, extra: Record<string, unknown> = {}) => ({
   simplicity: 9,
   hallucinationRisk: 0,
   twoSecondTest: true,
+  coversFact: true,
+  specific: true,
   obvious: true,
   forcedInterest: false,
   phoneticClear: true,

@@ -158,7 +158,7 @@ export async function findBridges(
           continue;
         }
         seenRefs.add(key);
-        const pre = preGate(c, factText);
+        const pre = preGate(c, factText, factType);
         if (pre) {
           reject(pre.code, pre.message);
           continue;

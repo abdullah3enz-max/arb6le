@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   QUALITY_THRESHOLD,
+  isTautology,
   confidenceLabel,
   finalScore,
   gateVerdict,
@@ -36,6 +37,8 @@ const verdict = (extra: Partial<BridgeVerdict> = {}): BridgeVerdict => ({
   simplicity: 9,
   hallucinationRisk: 0,
   twoSecondTest: true,
+  coversFact: true,
+  specific: true,
   obvious: true,
   forcedInterest: false,
   phoneticClear: true,
@@ -218,3 +221,46 @@ describe('quality, preference and the 80/20 rank', () => {
     expect(QUALITY_THRESHOLD).toBe(0.7);
   });
 });
+
+// From the real run on Lecture 2 - Parathyroid (Oct 8), which students saw as "8 means eight".
+describe('associations that add nothing to memory', () => {
+  const c = (worldRef: string, bridgeLine: string, extra: Partial<BridgeCandidate> = {}) =>
+    candidate({ connectionType: 'PHONETIC', worldCategory: 'DAILY_LIFE', worldRef, bridgeLine, interestFactId: 'x', ...extra });
+
+  it.each([
+    ['سبعين', '70% → سبعين'],
+    ['تمانية وثلاثة', '8.3% → تمانية وثلاثة'],
+    ['واحد', 'واحد → دقة القياس'],
+    ['ثلاث', 'ثلاث → أبعاد الغدة'],
+    ['تسعين', '90% → تسعين']
+  ])('"%s" is just the number said out loud', (ref, line) => {
+    expect(isTautology(c(ref, line))).toBe(true);
+    expect(preGate(c(ref, line, { phonetic: { term: 'x', soundsLike: 'x', matchedSound: 'x' } }), 'fact 70% 8.3% 1 3 90%')?.message).toMatch(
+      /نطق الرقم/
+    );
+  });
+
+  it('keeps references that are real things', () => {
+    expect(isTautology(c('مكعب سكر', '1 cm → مكعب سكر'))).toBe(false);
+    expect(isTautology(c('عشرة فناجين شاي', '10 → عشرة فناجين شاي'))).toBe(false);
+    expect(isTautology(c('Cristiano Ronaldo', '7 → Ronaldo #7'))).toBe(false);
+  });
+
+  it('a number fact must show its number in the association line', () => {
+    const offTopic = candidate({
+      connectionType: 'VISUAL',
+      worldCategory: 'GENERAL_KNOWLEDGE',
+      worldRef: 'خريطة جسم الإنسان',
+      anchor: '>90%',
+      bridgeLine: 'الغدة → موقعها في خريطة الجسم',
+      evidence: 'الخريطة توضح موقع الغدد بالجسم'
+    });
+    expect(preGate(offTopic, 'Superior gland >90%', 'NUMBER')?.message).toMatch(/رقم المعلومة/);
+  });
+
+  it('the judge’s "doesn’t carry the fact" and "vague reference" verdicts reject', () => {
+    expect(gateVerdict(candidate(), verdict({ coversFact: false }))?.code).toBe('weak_relation');
+    expect(gateVerdict(candidate(), verdict({ specific: false }))?.code).toBe('obscure_reference');
+  });
+});
+

@@ -35,6 +35,10 @@ const SYSTEM_PROMPT =
   '- hallucinationRisk: 0 = مستحيل يكون مختلق، 10 = غالبًا مختلق (شخصية أو حدث أو رقم ما تعرفه بيقين).\n' +
   'وأجب:\n' +
   '- twoSecondTest: هل يفهمه الطالب خلال ثانيتين بدون شرح؟\n' +
+  '- coversFact: هل الرابط يحمل المعلومة نفسها (رقمها أو مصطلحها أو معناها)؟ رابط عن فكرة مجاورة ' +
+  '(موقع الغدة بدل النسبة، شكل العقدة بدل "نتيجة إيجابية كاذبة") = false.\n' +
+  '- specific: هل المرجع شي محدد وملموس (اسم، مشهد، غرض، كلمة معروفة)؟ مرجع عام مثل "الكيمياء" ' +
+  'أو "تقييم" أو "مقياس" أو "خريطة الجسم" = false. ومجرد نطق الرقم بالعربي ("سبعين") = false.\n' +
   '- obvious: واضح (يقول "آه فهمت!") مو مجرد ممكن؟\n' +
   '- forcedInterest: (فقط إذا fromInterest=true) هل الرابط موجود بس لأن الطالب يحب هالشي؟\n' +
   '- phoneticClear: (فقط PHONETIC) انطق soundsLike و matchedSound بنفسك: هل يتطابق مقطع كامل بوضوح ' +
@@ -42,7 +46,7 @@ const SYSTEM_PROMPT =
   `- rejectReason: إذا لازم ينرفض، أحد: ${REJECT_REASONS.join('، ')} — وإلا null.\n` +
   '- reason: سبب قصير بالعربي.\n' +
   'أرجع JSON فقط: {"verdicts":[{"id":"...","directness":0,"familiarity":0,"memorability":0,"truthfulness":0,' +
-  '"simplicity":0,"hallucinationRisk":0,"twoSecondTest":true,"obvious":true,"forcedInterest":false,' +
+  '"simplicity":0,"hallucinationRisk":0,"twoSecondTest":true,"coversFact":true,"specific":true,"obvious":true,"forcedInterest":false,' +
   '"phoneticClear":true,"rejectReason":null,"reason":"..."}]} — حكم واحد لكل id.';
 
 export async function verifyBridges(
@@ -115,6 +119,8 @@ export function normalizeVerdict(raw: unknown): BridgeVerdict | null {
     simplicity: score(v.simplicity, 0),
     hallucinationRisk: score(v.hallucinationRisk, 10),
     twoSecondTest: v.twoSecondTest === true,
+    coversFact: v.coversFact === true,
+    specific: v.specific === true,
     obvious: v.obvious === true,
     // Only a clear "no" clears a candidate of being forced or of an unclear sound match.
     forcedInterest: v.forcedInterest !== false,
