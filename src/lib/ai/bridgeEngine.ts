@@ -1,6 +1,7 @@
 import { extractNumericAnchors } from './anchors';
 import { discoverBridges } from './agents/connectionFinder';
 import { verifyBridges } from './agents/connectionCritic';
+import { checkClaims } from './agents/claimChecker';
 import { checkEvidence } from './agents/factChecker';
 import { discoverInterestBridges, hasInterests, numericInterestMatches } from './agents/interestFinder';
 import type { InterestFactRow } from './agents/interestRetriever';
@@ -42,6 +43,7 @@ import type {
  *        → STAGE 2: one independent judge for the whole batch
  *        → hard gates → quality ≥ threshold (judge only)
  *        → rank: 0.8 × quality + 0.2 × preference
+ *        → sceptical fact check of the top few (only an explicit TRUE is ever shown)
  *
  * If nothing survives, one expansion round tries again, told why round one failed. Then the
  * fact honestly ends with NO STRONG ASSOCIATION — it still becomes a flashcard.
@@ -177,6 +179,7 @@ export async function findBridges(
     const verdicts = await verifyBridges(concept, memoryTarget, batch, { userId: opts.userId, factType });
 
     const roundRejections: string[] = [];
+    const passed: ScoredBridge[] = [];
     for (const c of batch) {
       const verdict = verdicts.get(c.id);
       if (!verdict) {
@@ -198,15 +201,20 @@ export async function findBridges(
         continue;
       }
       const p = preference(c, profile, factType);
-      accepted.push({ candidate: c, verdict, quality: q, preference: p, final: finalScore(q, p) });
+      passed.push({ candidate: c, verdict, quality: q, preference: p, final: finalScore(q, p) });
     }
+
+    // Last line before display: only associations a separate, sceptical fact check confirms.
+    passed.sort(byRank(factType));
+    const confirmed = await confirmClaims(concept, passed, opts.userId, (r) => {
+      rejected.push(r);
+      roundRejections.push(`${r.candidate.bridgeLine} — ${r.code}: ${r.reason}`);
+    });
+    accepted.push(...confirmed);
     priorRejections = roundRejections.slice(0, 10);
   }
 
-  accepted.sort(
-    (a, b) =>
-      b.final - a.final || typeRank(factType, a.candidate.connectionType) - typeRank(factType, b.candidate.connectionType)
-  );
+  accepted.sort(byRank(factType));
   const result: BridgeSearchResult = { factType, memoryTarget, anchors, accepted, rejected, rounds: round, discovered };
 
   if (process.env.CONNECTION_DEBUG === 'true') {
@@ -233,6 +241,64 @@ export async function findBridges(
     );
   }
   return result;
+}
+
+function byRank(factType: FactType) {
+  return (a: ScoredBridge, b: ScoredBridge) =>
+    b.final - a.final || typeRank(factType, a.candidate.connectionType) - typeRank(factType, b.candidate.connectionType);
+}
+
+/** Shown association + alternatives that need a confirmed claim; and a cap on checks per round. */
+const CONFIRMED_NEEDED = 3;
+const MAX_CLAIM_CHECKS = 6;
+
+/** Built in code from a stored, verified interest fact ("7 → Striker #7") — nothing left to check. */
+function isDeterministic(c: BridgeCandidate): boolean {
+  return /^r\d+n\d+$/.test(c.id) && c.interestFactId !== undefined;
+}
+
+/**
+ * Fact-checks the best passing associations, best first, until three are confirmed or six have
+ * been checked. Anything not explicitly TRUE is rejected (FALSE → inaccurate, UNSURE →
+ * hallucination_risk) and never shown.
+ */
+async function confirmClaims(
+  concept: ExtractedConcept,
+  ranked: ScoredBridge[],
+  userId: string,
+  reject: (r: RejectedBridge) => void
+): Promise<ScoredBridge[]> {
+  const confirmed: ScoredBridge[] = [];
+  const pending = [...ranked];
+  let checked = 0;
+  while (pending.length && confirmed.length < CONFIRMED_NEEDED && checked < MAX_CLAIM_CHECKS) {
+    const chunk = pending.splice(0, Math.min(CONFIRMED_NEEDED - confirmed.length, MAX_CLAIM_CHECKS - checked));
+    const toCheck = chunk.filter((a) => !isDeterministic(a.candidate));
+    const verdicts = await checkClaims(
+      toCheck.map((a) => ({
+        id: a.candidate.id,
+        statement: `المعلومة: ${concept.atomLabel} | الرابط: ${a.candidate.bridgeLine} | الدليل: ${a.candidate.evidence}`
+      })),
+      { userId }
+    );
+    checked += toCheck.length;
+    for (const a of chunk) {
+      if (isDeterministic(a.candidate)) {
+        confirmed.push(a);
+        continue;
+      }
+      const v = verdicts.get(a.candidate.id);
+      if (v?.verdict === 'TRUE') confirmed.push(a);
+      else
+        reject({
+          candidate: a.candidate,
+          code: v?.verdict === 'FALSE' ? 'inaccurate' : 'hallucination_risk',
+          reason: `التدقيق النهائي: ${v?.verdict ?? 'بدون حكم'}${v?.note ? ` — ${v.note}` : ''} (جودة ${a.quality})`,
+          quality: null
+        });
+    }
+  }
+  return confirmed;
 }
 
 /**

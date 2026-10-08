@@ -28,7 +28,9 @@ const SYSTEM_PROMPT =
   '- familiarity: قد إيش المرجع معروف لطالب جامعي سعودي.\n' +
   '- memorability: هل بيساعده يتذكر المعلومة نفسها بعد أسبوع.\n' +
   '- truthfulness: هل evidence والرابط صحيحين حرفيًا (أرقام، أسماء، أحداث). أي شك = أقل من 8. ' +
-  'المرشح اللي فيه verifiedFact=true مبني على حقيقة موثّقة مسبقًا — احكم على الرابط نفسه.\n' +
+  'المرشح اللي فيه verifiedFact=true مبني على حقيقة موثّقة مسبقًا — احكم على الرابط نفسه. ' +
+  'إذا الدليل يناقض الرابط (مثلًا يذكر رقم مختلف)، أو الرقم تقريبي وبعيد، أو رقم عن شخص/عمل ما ' +
+  'تعرفه بيقين → truthfulness 4 أو أقل.\n' +
   '- simplicity: يُفهم بنظرة؟\n' +
   '- hallucinationRisk: 0 = مستحيل يكون مختلق، 10 = غالبًا مختلق (شخصية أو حدث أو رقم ما تعرفه بيقين).\n' +
   'وأجب:\n' +
@@ -53,7 +55,7 @@ export async function verifyBridges(
   if (candidates.length === 0) return verdicts;
 
   const result = await routedComplete({
-    tier: 'strong',
+    tier: 'judge',
     agent: 'connection_critic',
     userId: opts.userId,
     responseFormat: 'json',

@@ -43,16 +43,48 @@ export function preGate(candidate: BridgeCandidate, factText: string): { code: R
     return { code: 'too_long', message: `الرابط طويل (${wordCount(line)} كلمات) — لازم يُفهم بنظرة` };
   }
 
+  // Evidence has to be a checkable statement, not just a link or a vague nod.
+  const statement = candidate.evidence.replace(/https?:\/\/\S+/g, '').trim();
+  if (wordCount(statement) < 3) {
+    return { code: 'hallucination_risk', message: 'الدليل مو جملة قابلة للتحقق (رابط أو كلمة بس)' };
+  }
+
   if (candidate.connectionType === 'NUMERIC') {
-    const factNumbers = new Set(numbersIn(factText));
-    const shared = numbersIn(`${candidate.anchor} ${line}`).some((n) => factNumbers.has(n));
+    const factNumbers = numbersIn(factText);
+    const shared = numbersIn(`${candidate.anchor} ${line}`).some((n) => factNumbers.includes(n));
     if (!shared) return { code: 'inaccurate', message: 'ربط رقمي برقم مو موجود في المعلومة' };
+
+    // The evidence itself must state that number (±10%): "1 cm → thumb" backed by "a thumb is
+    // 6-8 cm" contradicts itself and is rejected here, before any model gets a say.
+    const evidenceNumbers = numbersIn(statement).map(Number);
+    const backed = factNumbers.map(Number).some((f) => evidenceNumbers.some((e) => isNear(e, f)));
+    if (!backed) return { code: 'inaccurate', message: 'الدليل نفسه ما يذكر نفس الرقم' };
+
+    // A number ABOUT a specific person, team or work (shirt numbers, seasons, success rates...) is
+    // exactly what a model misremembers. Only a retrieved, verified interest fact may carry it.
+    if (!candidate.interestFactId && isEntityNumberClaim(candidate)) {
+      return { code: 'hallucination_risk', message: 'رقم عن شخص أو عمل بدون حقيقة موثّقة' };
+    }
   }
 
   if (candidate.connectionType === 'PHONETIC' && !candidate.phonetic)
     return { code: 'weak_relation', message: 'تشابه صوتي بدون النطقين للمقارنة' };
 
   return null;
+}
+
+function isNear(a: number, b: number): boolean {
+  return Math.abs(a - b) <= Math.max(Math.abs(b) * 0.1, 1e-9);
+}
+
+/** Worlds whose references are specific people/teams/works rather than universal knowledge. */
+const ENTITY_WORLDS = new Set(['FOOTBALL', 'SERIES', 'MOVIES', 'ANIME', 'GAMES', 'CHARACTERS', 'PEOPLE', 'MUSIC', 'CARS', 'BOOKS']);
+const ENTITY_NUMBER_WORDS =
+  /قميص|رقم\s*(?:ال)?لاعب|موسم|حلقة|جزء|هدف|أهداف|بطولة|نسبة\s*نجاح|shirt|jersey|kit number|season|episode|goals?\b|titles?\b/i;
+
+export function isEntityNumberClaim(candidate: BridgeCandidate): boolean {
+  if (ENTITY_WORLDS.has(candidate.worldCategory)) return true;
+  return ENTITY_NUMBER_WORDS.test(`${candidate.worldRef} ${candidate.evidence} ${candidate.bridgeLine}`);
 }
 
 /** The judge's hard gates: any failure rejects, whatever the scores say. */

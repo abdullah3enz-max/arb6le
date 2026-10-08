@@ -115,12 +115,14 @@ export async function GET() {
     // switched in CranL and no document has been processed since).
     const currentFastStats = byModelWithFailures.find((m) => m.model === currentModels.fast) ?? null;
     const currentStrongStats = byModelWithFailures.find((m) => m.model === currentModels.strong) ?? null;
+    const currentJudgeStats = byModelWithFailures.find((m) => m.model === currentModels.judge) ?? null;
 
     return NextResponse.json({
       currentModels: {
         provider: currentModels.provider,
         fast: { model: currentModels.fast, stats: currentFastStats },
-        strong: { model: currentModels.strong, stats: currentStrongStats }
+        strong: { model: currentModels.strong, stats: currentStrongStats },
+        judge: { model: currentModels.judge, stats: currentJudgeStats }
       },
       totalRequests: total,
       requestsToday,

@@ -111,7 +111,7 @@ async function retrieveFacts(interest: { name: string; world: WorldCategory }, u
   if (facts.length === 0) return [];
 
   const verified = await routedComplete({
-    tier: 'strong',
+    tier: 'judge',
     agent: 'interest_verifier',
     userId,
     responseFormat: 'json',

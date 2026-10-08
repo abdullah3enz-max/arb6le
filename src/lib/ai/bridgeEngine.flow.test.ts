@@ -53,20 +53,28 @@ const strikerNumber: InterestFactRow = {
   confidence: 0.98
 };
 
-type Agent = 'connection_finder' | 'phonetic_finder' | 'interest_finder' | 'connection_critic';
+type Agent = 'connection_finder' | 'phonetic_finder' | 'interest_finder' | 'connection_critic' | 'claim_checker';
 const reply = (obj: unknown) => ({ text: JSON.stringify(obj), model: 'stub', inputTokens: 0, outputTokens: 0, isMock: false });
 
 /** The discovery passes run in parallel, so the stub answers by agent name, in order per agent. */
 function script(replies: Partial<Record<Agent, unknown[]>>) {
   const queues = Object.fromEntries(Object.entries(replies).map(([k, v]) => [k, [...v!]]));
-  routedComplete.mockImplementation(async (args: { agent: Agent }) => {
+  routedComplete.mockImplementation(async (args: { agent: Agent; messages: { content: string }[] }) => {
     const next = queues[args.agent]?.shift();
     if (next instanceof Error) throw next;
-    return reply(next ?? (args.agent === 'connection_critic' ? { verdicts: [] } : { candidates: [] }));
+    if (next) return reply(next);
+    if (args.agent === 'claim_checker') {
+      // Unscripted: confirm every claim, so tests that aren't about fact-checking pass through.
+      const claims = JSON.parse(args.messages[1]!.content) as { id: string }[];
+      return reply({ results: claims.map((c) => ({ id: c.id, verdict: 'TRUE' })) });
+    }
+    return reply(args.agent === 'connection_critic' ? { verdicts: [] } : { candidates: [] });
   });
 }
 const callsFor = (agent: Agent) =>
-  routedComplete.mock.calls.map((c) => c[0] as { agent: Agent; messages: { content: string }[] }).filter((c) => c.agent === agent);
+  routedComplete.mock.calls
+    .map((c) => c[0] as { agent: Agent; tier: string; messages: { content: string }[] })
+    .filter((c) => c.agent === agent);
 
 const cand = (worldRef: string, extra: Record<string, unknown> = {}) => ({
   anchor: 'Salt',
@@ -238,5 +246,61 @@ describe('core association engine', () => {
 
     script({ connection_finder: [new Error('down')], phonetic_finder: [new Error('down')] });
     await expect(findBridges(SALT, emptyProfile, { userId: 'u1' })).rejects.toThrow('down');
+  });
+
+  it('the final fact check drops a passing but false claim, and the next confirmed one is shown', async () => {
+    script({
+      connection_finder: [
+        {
+          factType: 'ENGLISH_WORD',
+          memoryTarget: 'Salt',
+          anchors: [],
+          candidates: [cand('Made-up Scene', { connectionType: 'SCENE', worldCategory: 'MOVIES' }), cand('Sea Water', { connectionType: 'VISUAL' })]
+        }
+      ],
+      connection_critic: [{ verdicts: [verdict('r1c1', { directness: 10 }), verdict('r1c2', { directness: 8 })] }],
+      claim_checker: [
+        {
+          results: [
+            { id: 'r1c1', verdict: 'FALSE', note: 'that scene never happened' },
+            { id: 'r1c2', verdict: 'TRUE' }
+          ]
+        }
+      ]
+    });
+
+    const result = await findBridges(SALT, emptyProfile, { userId: 'u1' });
+
+    expect(result.accepted.map((a) => a.candidate.worldRef)).toEqual(['Sea Water']);
+    const dropped = result.rejected.find((r) => r.candidate.worldRef === 'Made-up Scene')!;
+    expect(dropped.code).toBe('inaccurate');
+    expect(dropped.reason).toContain('that scene never happened');
+    // Checked by the independent judge tier, never the generating model.
+    expect(callsFor('claim_checker')[0]!.tier).toBe('judge');
+    expect(callsFor('connection_critic')[0]!.tier).toBe('judge');
+  });
+
+  it('"unsure" is not good enough: nothing confirmed means another round, then an honest empty result', async () => {
+    script({
+      connection_finder: [{ factType: 'ENGLISH_WORD', memoryTarget: 'Salt', anchors: [], candidates: [cand('Maybe True')] }],
+      connection_critic: [{ verdicts: [verdict('r1c1')] }],
+      claim_checker: [{ results: [{ id: 'r1c1', verdict: 'UNSURE' }] }]
+    });
+
+    const result = await findBridges(SALT, emptyProfile, { userId: 'u1' });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rounds).toBe(2);
+    expect(result.rejected.find((r) => r.candidate.worldRef === 'Maybe True')?.code).toBe('hallucination_risk');
+  });
+
+  it('an association built in code from a verified interest fact skips the claim check', async () => {
+    script({
+      connection_finder: [{ factType: 'NUMBER', memoryTarget: '7', anchors: [], candidates: [] }],
+      connection_critic: [{ verdicts: [verdict('r1n1')] }]
+    });
+    const result = await findBridges(DOSE, footballFan, { userId: 'u1', interestFacts: [strikerNumber] });
+    expect(result.accepted).toHaveLength(1);
+    expect(callsFor('claim_checker')).toHaveLength(0);
   });
 });

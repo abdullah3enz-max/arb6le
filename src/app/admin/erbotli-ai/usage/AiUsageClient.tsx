@@ -23,6 +23,7 @@ interface AiUsageData {
     provider: string;
     fast: { model: string; stats: ModelStats | null };
     strong: { model: string; stats: ModelStats | null };
+    judge: { model: string; stats: ModelStats | null };
   };
   totalRequests: number;
   requestsToday: number;
@@ -47,6 +48,7 @@ const AGENT_LABEL: Record<string, string> = {
   interest_finder: '❤️ الربط بالاهتمامات',
   interest_retriever: '📚 جمع حقائق الاهتمامات',
   interest_verifier: '✅ تدقيق حقائق الاهتمامات',
+  claim_checker: '🔍 تدقيق الحقيقة قبل العرض',
   knowledge_mapper: '🧩 ربط المفاهيم ببعضها',
   connection_critic: '⚖️ حكم الروابط',
   quiz_generator: '📝 توليد الاختبارات'
@@ -102,9 +104,19 @@ export function AiUsageClient() {
           مقروء مباشرة من إعدادات البيئة الحالية (env vars) — أي تغيير بالموديل بالاستضافة ينعكس هنا تلقائيًا،
           وأي موديل نستخدمه بالمستقبل بيظهر بجدول &quot;مقارنة الموديلات&quot; تحت بمجرد أول استدعاء له.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <ModelCard label="⚡ السريع (Fast tier)" sub="استخراج المفاهيم، ربط المفاهيم، توليد الاختبارات" model={data.currentModels.fast.model} stats={data.currentModels.fast.stats} />
-          <ModelCard label="🧠 القوي (Strong tier)" sub="البحث عن الروابط، نقد الروابط" model={data.currentModels.strong.model} stats={data.currentModels.strong.stats} />
+          <ModelCard label="🧠 القوي (Strong tier)" sub="اكتشاف الروابط وجمع حقائق الاهتمامات" model={data.currentModels.strong.model} stats={data.currentModels.strong.stats} />
+          <ModelCard
+            label="⚖️ الحكم (Judge tier)"
+            sub={
+              data.currentModels.judge.model === data.currentModels.strong.model
+                ? 'حكم الروابط وتدقيق الحقائق — نفس النموذج القوي (يُفضّل نموذج مستقل: OPENAI_COMPATIBLE_MODEL_JUDGE)'
+                : 'حكم الروابط وتدقيق الحقائق — نموذج مستقل عن المولّد'
+            }
+            model={data.currentModels.judge.model}
+            stats={data.currentModels.judge.stats}
+          />
         </div>
       </section>
 

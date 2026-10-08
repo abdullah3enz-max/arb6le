@@ -5,7 +5,12 @@ import type { LlmCallOptions, LlmCallResult, LlmProvider } from './providers/typ
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { db } from '@/lib/db';
 
-export type ModelTier = 'fast' | 'strong';
+/**
+ * 'judge' is the independent checker (association judge, fact checks). It can — and should — be a
+ * different, more factually reliable model than the one that generates: a model judging its own
+ * output agrees with itself. Unset, it falls back to the strong model.
+ */
+export type ModelTier = 'fast' | 'strong' | 'judge';
 
 /** Benchmark-only: runs a block of work against another model of the same provider. */
 const modelOverride = new AsyncLocalStorage<{ model: string }>();
@@ -29,7 +34,9 @@ interface ProviderConfig {
  */
 function resolveProviderConfig(tier: ModelTier): ProviderConfig {
   const config = resolveConfiguredProvider(tier);
-  const forced = modelOverride.getStore()?.model;
+  // A benchmark override swaps the generating model only; the judge stays fixed so two runs are
+  // measured with the same yardstick.
+  const forced = tier === 'judge' ? undefined : modelOverride.getStore()?.model;
   return forced && config.provider !== 'mock' ? { ...config, model: forced } : config;
 }
 
@@ -38,10 +45,13 @@ function resolveConfiguredProvider(tier: ModelTier): ProviderConfig {
 
   const wantsAnthropic = requested === 'anthropic' || (!requested && process.env.ANTHROPIC_API_KEY);
   if (wantsAnthropic && process.env.ANTHROPIC_API_KEY) {
+    const strong = process.env.ANTHROPIC_MODEL_STRONG ?? 'claude-sonnet-5';
     const model =
       tier === 'fast'
         ? process.env.ANTHROPIC_MODEL_FAST ?? 'claude-haiku-4-5-20251001'
-        : process.env.ANTHROPIC_MODEL_STRONG ?? 'claude-sonnet-5';
+        : tier === 'judge'
+          ? process.env.ANTHROPIC_MODEL_JUDGE ?? strong
+          : strong;
     return { provider: 'anthropic', model };
   }
 
@@ -49,7 +59,11 @@ function resolveConfiguredProvider(tier: ModelTier): ProviderConfig {
     requested === 'openai_compatible' || (!requested && process.env.OPENAI_COMPATIBLE_API_KEY);
   if (wantsOpenAiCompatible) {
     const model =
-      (tier === 'fast' ? process.env.OPENAI_COMPATIBLE_MODEL_FAST : process.env.OPENAI_COMPATIBLE_MODEL_STRONG) ??
+      (tier === 'fast'
+        ? process.env.OPENAI_COMPATIBLE_MODEL_FAST
+        : tier === 'judge'
+          ? process.env.OPENAI_COMPATIBLE_MODEL_JUDGE ?? process.env.OPENAI_COMPATIBLE_MODEL_STRONG
+          : process.env.OPENAI_COMPATIBLE_MODEL_STRONG) ??
       process.env.OPENAI_COMPATIBLE_MODEL ??
       '(OPENAI_COMPATIBLE_MODEL غير معرّف)';
     return { provider: 'openai_compatible', model };
@@ -117,11 +131,17 @@ function parseExtraBody(raw: string | undefined): Record<string, unknown> | unde
  * broken/unconfigured openai_compatible setup (unlike buildProvider, which throws), since this
  * is describing config, not making a call.
  */
-export function describeConfiguredModels(): { provider: ProviderConfig['provider']; fast: string; strong: string } {
+export function describeConfiguredModels(): {
+  provider: ProviderConfig['provider'];
+  fast: string;
+  strong: string;
+  judge: string;
+} {
   return {
-    provider: resolveProviderConfig('fast').provider, // one provider serves both tiers
+    provider: resolveProviderConfig('fast').provider, // one provider serves every tier
     fast: resolveProviderConfig('fast').model,
-    strong: resolveProviderConfig('strong').model
+    strong: resolveProviderConfig('strong').model,
+    judge: resolveProviderConfig('judge').model
   };
 }
 

@@ -60,17 +60,75 @@ const profile: UserMemoryProfile = {
 };
 
 describe('preGate (no model needed)', () => {
-  it('passes a one-glance number association whose number is in the fact', () => {
-    expect(preGate(candidate(), 'Dose = 7 mg')).toBeNull();
+  it('passes a one-glance number association built on a verified interest fact', () => {
+    expect(preGate(candidate({ interestFactId: 'f1' }), 'Dose = 7 mg')).toBeNull();
+  });
+
+  it('allows a universal-knowledge number, but never a number about a person/work from model memory', () => {
+    const week = candidate({
+      worldCategory: 'GENERAL_KNOWLEDGE',
+      worldRef: 'أيام الأسبوع',
+      bridgeLine: '7 mg → أيام الأسبوع',
+      evidence: 'الأسبوع فيه 7 أيام'
+    });
+    expect(preGate(week, 'Dose = 7 mg')).toBeNull();
+    expect(preGate(candidate(), 'Dose = 7 mg')?.code).toBe('hallucination_risk');
+  });
+
+  // The real hallucinations that reached students under the previous engine (Lecture 2 - Parathyroid).
+  describe('real production hallucinations are stopped in code, before any model', () => {
+    const real = (extra: Partial<BridgeCandidate>) => candidate({ worldCategory: 'GENERAL_KNOWLEDGE', ...extra });
+
+    it('"70% ← 70 (Messi shirt)" backed only by a link', () => {
+      const c = real({ anchor: '70%', bridgeLine: '70% ← 70', worldRef: 'رقم قميص ليونيل ميسي في إنتر ميامي', evidence: 'https://ar.wikipedia.org/wiki/x' });
+      expect(preGate(c, 'Inferior gland location 70%')?.code).toBe('hallucination_risk');
+    });
+
+    it('"8.3% ← Messi 8.3": a shirt-number claim with no verified fact', () => {
+      const c = real({
+        anchor: '8.3%',
+        bridgeLine: '8.3% ← 8.3',
+        worldRef: 'رقم قميص ليونيل ميسي في إنتر ميامي',
+        evidence: 'رقم قميص ليونيل ميسي في إنتر ميامي هو 8.3.'
+      });
+      expect(preGate(c, 'US detection rate 8.3%')?.code).toBe('hallucination_risk');
+    });
+
+    it('">90% ← Survey Corps success rate": evidence never states the number', () => {
+      const c = real({
+        anchor: '>90%',
+        bridgeLine: '>90% ← نسبة نجاح الفيلق',
+        worldCategory: 'ANIME',
+        worldRef: 'الفيلق الاستطلاعي',
+        evidence: 'نسبة نجاح الفيلق الاستطلاعي مذكورة في عدة حلقات ضمنيًا.'
+      });
+      expect(preGate(c, 'Superior gland location >90%')?.code).toBe('inaccurate');
+    });
+
+    it('"1 cm ← thumb length" when its own evidence says 6-8 cm', () => {
+      const c = real({
+        anchor: '1 cm',
+        bridgeLine: '1 cm ← طول الإبهام',
+        worldCategory: 'DAILY_LIFE',
+        worldRef: 'طول الإبهام',
+        evidence: 'متوسط طول الإبهام البشري يتراوح بين 6-8 سم.'
+      });
+      expect(preGate(c, 'Hyperplasia 1 cm')?.code).toBe('inaccurate');
+    });
+
+    it('"10 MHz ← Messi 10": football number without a verified fact', () => {
+      const c = candidate({ anchor: '10', bridgeLine: '10 MHz ← رقم 10', worldRef: 'ميسي', evidence: 'رقم قميص ميسي هو 10' });
+      expect(preGate(c, '> 10 MHz')?.code).toBe('hallucination_risk');
+    });
   });
 
   it('rejects a number association whose number is not in the fact', () => {
-    expect(preGate(candidate({ bridgeLine: '10 → Messi #10', anchor: '10' }), 'Dose = 7 mg')?.code).toBe('inaccurate');
+    expect(preGate(candidate({ bridgeLine: '10 → Messi #10', anchor: '10', interestFactId: 'f1' }), 'Dose = 7 mg')?.code).toBe('inaccurate');
   });
 
   it('rejects a line that needs reading instead of a glance', () => {
     const long = '7 mg can be remembered by imagining Cristiano Ronaldo scoring seven goals';
-    expect(preGate(candidate({ bridgeLine: long }), '7 mg')?.code).toBe('too_long');
+    expect(preGate(candidate({ bridgeLine: long, interestFactId: 'f1' }), '7 mg')?.code).toBe('too_long');
   });
 
   it('allows MINI_STORY one short sentence, never a story', () => {

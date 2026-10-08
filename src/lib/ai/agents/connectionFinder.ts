@@ -69,6 +69,8 @@ export const ASSOCIATION_RULES =
   '(رقم، شخصية، حدث) لا تكتب المرشح.\n' +
   '- evidence = الحقيقة الخارجية اللي يقوم عليها الرابط، قابلة للتحقق. confidence = ثقتك فيها (0-1). ' +
   'relationDistance = عدد الخطوات الذهنية (1 = مباشر).\n' +
+  '- ابدع في الزاوية، مو في الحقائق: كل رقم واسم وحدث ومشهد لازم يكون صحيح 100%. ' +
+  'رقم عن شخص أو فريق أو عمل (رقم قميص، عدد مواسم، نسبة) لا تكتبه إلا إذا متأكد منه حرفيًا.\n' +
   '- أي اسم في أي تعليمات سابقة ليس إجابة جاهزة ولا قالب.\n' +
   '- إذا ما فيه رابط قوي، أرجع candidates فاضية — "ما فيه رابط قوي" نتيجة صحيحة.\n';
 
@@ -80,7 +82,10 @@ const SYSTEM_PROMPT =
   '2) anchors: فكّك المعلومة لعناصر صغيرة (مصطلح، رقم، صفة، علاقة...) وأعطِ كل عنصر relevance (0-1) ' +
   '= قيمته للحفظ. memoryTarget = الجزء اللي غالبًا بينساه الطالب.\n' +
   '3) candidates: لكل عنصر مهم، جرّب كل نوع ربط مسموح (القائمة مرفقة مرتبة حسب الأنسب) وقارن — ' +
-  'لا توقف عند أول نوع. ولّد 10 إلى 14 مرشح متنوع الأنواع، و3 مرشحين رقميين بالكثير.\n\n' +
+  'لا توقف عند أول نوع. ولّد 10 إلى 14 مرشح متنوع الأنواع، و3 مرشحين رقميين بالكثير.\n' +
+  '4) ابدع: الرابط العادي سهل — دوّر على الزاوية اللي تخلي الطالب يبتسم ويقول "آه!": صوت يحمل ' +
+  'المعنى نفسه، صورة ذهنية حية وغريبة، مشهد مشهور يمشي بنفس آلية المعلومة، شي يومي سعودي يشتغل ' +
+  'بنفس الطريقة، أو كلمة عربية تشرح المصطلح بنفسها. غطِّ 3 عوالم مختلفة على الأقل.\n\n' +
   TYPE_GUIDE +
   '\n' +
   ASSOCIATION_RULES +
@@ -144,8 +149,9 @@ export async function discoverBridges(concept: ExtractedConcept, opts: Discovery
     agent: 'connection_finder',
     userId: opts.userId,
     responseFormat: 'json',
-    // Discovery is deliberately looser than judging: variety here, strictness later.
-    temperature: 0.6,
+    // Discovery is deliberately loose — creative angles here; truth is enforced afterwards by the
+    // code gates, the judge (a separate tier) and the final fact check.
+    temperature: 0.85,
     maxTokens: 6144,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT + expansionText(opts) },

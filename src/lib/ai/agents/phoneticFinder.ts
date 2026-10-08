@@ -55,7 +55,7 @@ export async function discoverPhoneticBridges(concept: ExtractedConcept, opts: P
     agent: 'phonetic_finder',
     userId: opts.userId,
     responseFormat: 'json',
-    temperature: 0.5,
+    temperature: 0.75,
     maxTokens: 4096,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT + expansionText(opts) },

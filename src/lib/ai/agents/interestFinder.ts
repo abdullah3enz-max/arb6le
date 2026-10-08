@@ -90,7 +90,7 @@ export async function discoverInterestBridges(concept: ExtractedConcept, opts: I
     agent: 'interest_finder',
     userId: opts.userId,
     responseFormat: 'json',
-    temperature: 0.4,
+    temperature: 0.6,
     maxTokens: 4096,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT + expansionText(opts) },
